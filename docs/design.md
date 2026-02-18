@@ -86,6 +86,20 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 5. 作成されたワークツリーのパスを stdout に出力
 ```
 
+### 3.3 `wd remove` — ワークツリー削除
+
+**書式**: `wd remove <branch>`
+
+**処理フロー**:
+
+```
+1. カレントディレクトリから親方向へ .bare/ を探索してプロジェクトルートを特定
+2. プロジェクトルートが見つからない → エラー終了
+3. 指定されたワークツリーが存在しない → エラー終了
+4. git worktree remove でワークツリーを削除
+5. .devcontainer symlink が削除されたワークツリーを指していれば symlink も削除
+```
+
 ## 4. 設定
 
 | 変数      | デフォルト       | 説明                                 |
@@ -122,6 +136,7 @@ WD_VERSION="dev"
 # --- utils ---         共通関数 (die, parse_repo_url, detect_default_branch, find_project_root)
 # --- cmd_clone ---     wd clone の実装
 # --- cmd_add ---       wd add の実装
+# --- cmd_remove ---    wd remove の実装
 # --- usage ---         ヘルプ表示
 # --- main ---          引数パース、サブコマンドディスパッチ
 ```

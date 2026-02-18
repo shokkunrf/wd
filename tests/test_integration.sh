@@ -168,5 +168,85 @@ unset _orig_parse_repo_url
 teardown_test_env
 
 # ============================================================
+describe "cmd_remove"
+# ============================================================
+
+setup_test_env
+
+_source=$(create_local_bare_repo "$_test_tmpdir/source_remove")
+_orig_parse_repo_url=$(type parse_repo_url | tail -n +2)
+# shellcheck disable=SC2317
+parse_repo_url() { echo "github.com/test/remove-test"; } # monkey-patch
+_result=$(cmd_clone "$_source" 2>&3)
+_proj="$WD_ROOT/github.com/test/remove-test"
+
+cd "$_proj/main"
+
+it "removes a single worktree"
+_result=$(cmd_add -b feature-rm 2>&3)
+cmd_remove wt-feature-rm 2>&3 >&3
+if [ ! -d "$_proj/wt-feature-rm" ]; then _pass; else _fail "worktree still exists"; fi
+
+it "removes multiple worktrees"
+_result=$(cmd_add -b multi-a 2>&3)
+_result=$(cmd_add -b multi-b 2>&3)
+cmd_remove wt-multi-a wt-multi-b 2>&3 >&3
+if [ ! -d "$_proj/wt-multi-a" ] && [ ! -d "$_proj/wt-multi-b" ]; then _pass; else _fail "worktrees still exist"; fi
+
+it "rejects removing default worktree"
+assert_exit_code 1 cmd_remove main
+
+it "preserves branch without -b flag"
+_result=$(cmd_add -b branch-keep 2>&3)
+cmd_remove wt-branch-keep 2>&3 >&3
+_has_branch=0
+git -C "$_proj" branch --list "branch-keep" | grep -q "branch-keep" && _has_branch=1
+if [ "$_has_branch" = 1 ]; then _pass; else _fail "branch should be preserved"; fi
+
+it "deletes branch with -b flag"
+_result=$(cmd_add -b branch-del 2>&3)
+cmd_remove -b wt-branch-del 2>&3 >&3
+_has_branch=0
+git -C "$_proj" branch --list "branch-del" | grep -q "branch-del" && _has_branch=1
+if [ "$_has_branch" = 0 ]; then _pass; else _fail "branch should be deleted"; fi
+
+it "deletes branch with --branch flag"
+_result=$(cmd_add -b branch-del2 2>&3)
+cmd_remove --branch wt-branch-del2 2>&3 >&3
+_has_branch=0
+git -C "$_proj" branch --list "branch-del2" | grep -q "branch-del2" && _has_branch=1
+if [ "$_has_branch" = 0 ]; then _pass; else _fail "branch should be deleted"; fi
+
+it "removes all non-default worktrees with -a"
+_result=$(cmd_add -b all-a 2>&3)
+_result=$(cmd_add -b all-b 2>&3)
+cmd_remove -a 2>&3 >&3
+if [ -d "$_proj/main" ] && [ ! -d "$_proj/wt-all-a" ] && [ ! -d "$_proj/wt-all-b" ]; then _pass; else _fail "non-default should be removed"; fi
+
+it "-a with no worktrees is silent"
+_output=$(cmd_remove -a 2>&1)
+if [ -z "$_output" ]; then _pass; else _fail "expected no output, got: $_output"; fi
+
+it "fails for nonexistent worktree"
+assert_exit_code 1 cmd_remove wt-nonexistent
+
+# --- argument errors ---
+
+it "fails with no arguments"
+assert_exit_code 1 cmd_remove
+
+it "fails with unknown option"
+assert_exit_code 1 cmd_remove --unknown
+
+it "fails outside project"
+cd "$_test_tmpdir"
+assert_exit_code 1 cmd_remove wt-somebranch
+
+eval "$_orig_parse_repo_url"
+unset _orig_parse_repo_url
+
+teardown_test_env
+
+# ============================================================
 
 test_summary
