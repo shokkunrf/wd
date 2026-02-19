@@ -99,6 +99,65 @@ unset _orig_parse_repo_url
 teardown_test_env
 
 # ============================================================
+describe "cmd_list"
+# ============================================================
+
+setup_test_env
+
+_source1=$(create_local_bare_repo "$_test_tmpdir/source_list1")
+_source2=$(create_local_bare_repo "$_test_tmpdir/source_list2")
+_orig_parse_repo_url=$(type parse_repo_url | tail -n +2)
+
+# shellcheck disable=SC2317
+parse_repo_url() { echo "github.com/owner1/repo1"; } # monkey-patch
+_result=$(cmd_clone "$_source1" 2>&3)
+_proj1="$WD_ROOT/github.com/owner1/repo1"
+
+# shellcheck disable=SC2317
+parse_repo_url() { echo "github.com/owner2/repo2"; } # monkey-patch
+_result=$(cmd_clone "$_source2" 2>&3)
+
+it "lists managed projects"
+_result=$(cmd_list)
+assert_contains "$_result" "github.com/owner1/repo1"
+assert_contains "$_result" "github.com/owner2/repo2"
+
+it "ignores directories without .bare"
+mkdir -p "$WD_ROOT/github.com/owner3/repo3"
+_result=$(cmd_list)
+assert_not_contains "$_result" "owner3/repo3"
+
+it "shows full path with --full-path"
+_result=$(cmd_list --full-path)
+assert_contains "$_result" "$WD_ROOT/github.com/owner1/repo1"
+
+it "shows worktree paths with --worktrees"
+cd "$_proj1/main"
+_result=$(cmd_add -b feature-x 2>&3)
+_result=$(cmd_list --worktrees)
+assert_contains "$_result" "github.com/owner1/repo1/main"
+assert_contains "$_result" "github.com/owner1/repo1/wt-feature-x"
+
+it "returns empty for no projects"
+teardown_test_env
+setup_test_env
+_result=$(cmd_list)
+if [ -z "$_result" ]; then _pass; else _fail "expected empty output, got: $_result"; fi
+
+# --- argument errors ---
+
+it "fails with unknown option"
+assert_exit_code 1 cmd_list --unknown
+
+it "fails with too many arguments"
+assert_exit_code 1 cmd_list repo1
+
+eval "$_orig_parse_repo_url"
+unset _orig_parse_repo_url
+
+teardown_test_env
+
+# ============================================================
 describe "cmd_add"
 # ============================================================
 

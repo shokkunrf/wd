@@ -158,6 +158,53 @@ cmd_clone() {
   unset _branch _url _parsed _project_dir _head_branch _default_branch _branch_exists
 }
 
+# --- cmd_list ---
+
+cmd_list() {
+  _cl_full_path=false
+  _cl_worktrees=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --full-path)
+      _cl_full_path=true
+      shift
+      ;;
+    --worktrees)
+      _cl_worktrees=true
+      shift
+      ;;
+    -*)
+      die "wd list: unknown option: $1"
+      ;;
+    *)
+      die "wd list: too many arguments"
+      ;;
+    esac
+  done
+
+  for _proj_dir in "$WD_ROOT"/*/*/*; do
+    if [ ! -d "$_proj_dir/.bare" ]; then
+      continue
+    fi
+
+    if $_cl_full_path; then
+      _display="$_proj_dir"
+    else
+      _display="${_proj_dir#"$WD_ROOT"/}"
+    fi
+
+    if $_cl_worktrees; then
+      _wt_names=$(list_worktrees "$_proj_dir")
+      for _t in $_wt_names; do
+        echo "$_display/$_t"
+      done
+    else
+      echo "$_display"
+    fi
+  done
+  unset _cl_full_path _cl_worktrees
+}
+
 # --- cmd_add ---
 
 cmd_add() {
@@ -294,6 +341,7 @@ Usage: wd <command> [options]
 
 Project Management:
   clone <repo-url> [-b <branch>]  Clone repository (bare + worktree)
+  list [--full-path] [--worktrees]  List managed projects
 
 Worktree Management:
   add <branch> [-b]               Add worktree (-b: create new branch)
@@ -319,6 +367,10 @@ main() {
   clone)
     shift
     cmd_clone "$@"
+    ;;
+  list)
+    shift
+    cmd_list "$@"
     ;;
   add)
     shift

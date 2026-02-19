@@ -73,7 +73,7 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 
 ### 3.2 `wd add` — ワークツリー追加
 
-**書式**: `wd add <branch> [-b]`
+**書式**: `wd add <branch> [-b]` / `wd add --pr <number>`
 
 **処理フロー**:
 
@@ -81,23 +81,45 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 1. カレントディレクトリから親方向へ .bare/ を探索してプロジェクトルートを特定
 2. プロジェクトルートが見つからない → エラー終了
 3. 同名のワークツリーが既存なら → エラー終了
-4. -b 指定あり → git worktree add -b <branch> <branch> (新規ブランチ作成)
-   -b 指定なし → git worktree add <branch> <branch> (既存ブランチをチェックアウト)
-5. 作成されたワークツリーのパスを stdout に出力
+4. --pr 指定 → git fetch origin pull/<number>/head:pr-<number> + worktree add (pr-<number> ディレクトリ)
+5. -b 指定あり → git worktree add -b <branch> wt-<branch> (新規ブランチ作成)
+   -b 指定なし → git worktree add wt-<branch> <branch> (既存ブランチをチェックアウト)
+6. 作成されたワークツリーのパスを stdout に出力
 ```
 
 ### 3.3 `wd remove` — ワークツリー削除
 
-**書式**: `wd remove <branch>`
+**書式**: `wd remove <name>... [-b|--branch]` / `wd remove -a [-b|--branch]`
 
 **処理フロー**:
 
 ```
 1. カレントディレクトリから親方向へ .bare/ を探索してプロジェクトルートを特定
 2. プロジェクトルートが見つからない → エラー終了
-3. 指定されたワークツリーが存在しない → エラー終了
-4. git worktree remove でワークツリーを削除
-5. .devcontainer symlink が削除されたワークツリーを指していれば symlink も削除
+3. -a 指定 → デフォルト以外の全ワークツリーを対象 (確認プロンプト付き)
+4. デフォルトワークツリーは削除をスキップ (警告表示)
+5. git worktree remove でワークツリーを削除
+6. -b/--branch 指定時は対応するブランチも削除
+```
+
+### 3.4 `wd list` — プロジェクト一覧
+
+**書式**: `wd list [query] [--full-path] [--worktrees]`
+
+**処理フロー**:
+
+```
+1. $WD_ROOT 配下から .bare ディレクトリを再帰検索
+2. 各 .bare の親ディレクトリがプロジェクトルート
+3. $WD_ROOT/ プレフィックスを除去して host/owner/repo 形式で出力
+4. アルファベット順にソート
+```
+
+**出力例**:
+
+```
+github.com/owner1/repo1
+github.com/owner2/repo2
 ```
 
 ## 4. 設定
@@ -137,6 +159,7 @@ WD_VERSION="dev"
 # --- cmd_clone ---     wd clone の実装
 # --- cmd_add ---       wd add の実装
 # --- cmd_remove ---    wd remove の実装
+# --- cmd_list ---      wd list の実装
 # --- usage ---         ヘルプ表示
 # --- main ---          引数パース、サブコマンドディスパッチ
 ```

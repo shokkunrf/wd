@@ -64,6 +64,20 @@ assert_contains() {
   unset _haystack _needle
 }
 
+assert_not_contains() {
+  _haystack="$1"
+  _needle="$2"
+  case "$_haystack" in
+  *"$_needle"*)
+    _fail "'$_haystack' should not contain '$_needle'"
+    ;;
+  *)
+    _pass
+    ;;
+  esac
+  unset _haystack _needle
+}
+
 assert_exit_code() {
   _expected_code="$1"
   shift
