@@ -28,6 +28,20 @@ parse_repo_url() {
   unset _url _host _path
 }
 
+find_project_root() {
+  _dir="$(pwd)"
+  while [ "$_dir" != "/" ]; do
+    if [ -d "$_dir/.bare" ]; then
+      echo "$_dir"
+      unset _dir
+      return
+    fi
+    _dir=$(dirname "$_dir")
+  done
+  unset _dir
+  return 1
+}
+
 # --- cmd_clone ---
 
 cmd_clone() {
@@ -109,6 +123,59 @@ cmd_clone() {
   unset _branch _url _parsed _project_dir _head_branch _default_branch _branch_exists
 }
 
+# --- cmd_add ---
+
+cmd_add() {
+  _branch=""
+  _create=false
+  _pr_number=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    -b | --branch)
+      _create=true
+      shift
+      ;;
+    --pr)
+      [ $# -ge 2 ] || die "wd add: --pr requires an argument"
+      _pr_number="$2"
+      shift 2
+      ;;
+    -*)
+      die "wd add: unknown option: $1"
+      ;;
+    *)
+      [ -z "$_branch" ] || die "wd add: too many arguments"
+      _branch="$1"
+      shift
+      ;;
+    esac
+  done
+
+  _project_dir=$(find_project_root) || die "not in a wd project"
+
+  if [ -n "$_pr_number" ]; then
+    _wt_dir="pr-$_pr_number"
+    [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_wt_dir' already exists"
+    git -C "$_project_dir" fetch origin "pull/$_pr_number/head:$_wt_dir"
+    git -C "$_project_dir" worktree add "$_wt_dir" "$_wt_dir"
+  else
+    [ -n "$_branch" ] || {
+      usage
+      exit 1
+    }
+    _wt_dir="wt-$_branch"
+    [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_branch' already exists"
+    if $_create; then
+      git -C "$_project_dir" worktree add "$_wt_dir" -b "$_branch"
+    else
+      git -C "$_project_dir" worktree add "$_wt_dir" "$_branch"
+    fi
+  fi
+
+  echo "$_project_dir/$_wt_dir"
+  unset _branch _create _pr_number _project_dir _wt_dir
+}
+
 # --- usage ---
 
 usage() {
@@ -119,6 +186,10 @@ Usage: wd <command> [options]
 
 Project Management:
   clone <repo-url> [-b <branch>]  Clone repository (bare + worktree)
+
+Worktree Management:
+  add <branch> [-b]               Add worktree (-b: create new branch)
+  add --pr <number>               Add PR review worktree
 
 Options:
   --version    Show version
@@ -138,6 +209,10 @@ main() {
   clone)
     shift
     cmd_clone "$@"
+    ;;
+  add)
+    shift
+    cmd_add "$@"
     ;;
   --version | -v) echo "wd version $WD_VERSION" ;;
   --help | -h | "") usage ;;

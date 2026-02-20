@@ -99,5 +99,74 @@ unset _orig_parse_repo_url
 teardown_test_env
 
 # ============================================================
+describe "cmd_add"
+# ============================================================
+
+setup_test_env
+
+_source=$(create_local_bare_repo "$_test_tmpdir/source_add")
+_orig_parse_repo_url=$(type parse_repo_url | tail -n +2)
+# shellcheck disable=SC2317
+parse_repo_url() { echo "github.com/test/add-test"; } # monkey-patch
+_result=$(cmd_clone "$_source" 2>&3)
+_proj="$WD_ROOT/github.com/test/add-test"
+
+# Create an extra branch in the source repo for testing
+git -C "$_source" checkout -b feature-1 2>&3 >&3
+echo "feature" >"$_source/feature.txt"
+git -C "$_source" add -A 2>&3 >&3
+git -C "$_source" commit -m "feature commit" 2>&3 >&3
+git -C "$_proj" fetch origin 2>&3 >&3
+
+# Create a PR-like ref in the source repo
+git -C "$_source" update-ref refs/pull/12/head HEAD
+
+cd "$_proj/main"
+
+it "adds worktree with wt- prefix"
+_result=$(cmd_add feature-1 2>&3)
+if [ -d "$_proj/wt-feature-1" ]; then _pass; else _fail "worktree not found"; fi
+
+it "rejects duplicate worktree"
+assert_exit_code 1 cmd_add feature-1
+
+it "creates new branch with -b and wt- prefix"
+_result=$(cmd_add -b newbranch 2>&3)
+if [ -d "$_proj/wt-newbranch" ]; then _pass; else _fail "worktree not found"; fi
+
+it "adds PR worktree with pr- prefix"
+_result=$(cmd_add --pr 12 2>&3)
+if [ -d "$_proj/pr-12" ]; then _pass; else _fail "pr-12 directory not found"; fi
+
+it "outputs correct path for PR worktree"
+assert_contains "$_result" "pr-12"
+
+it "rejects duplicate PR worktree"
+assert_exit_code 1 cmd_add --pr 12
+
+# --- argument errors ---
+
+it "--pr requires an argument"
+assert_exit_code 1 cmd_add --pr
+
+it "fails with no arguments"
+assert_exit_code 1 cmd_add
+
+it "fails with unknown option"
+assert_exit_code 1 cmd_add --unknown
+
+it "fails with too many arguments"
+assert_exit_code 1 cmd_add branch1 branch2
+
+it "fails outside project"
+cd "$_test_tmpdir"
+assert_exit_code 1 cmd_add somebranch
+
+eval "$_orig_parse_repo_url"
+unset _orig_parse_repo_url
+
+teardown_test_env
+
+# ============================================================
 
 test_summary

@@ -71,6 +71,21 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 11. プロジェクトディレクトリのパスを stdout に出力
 ```
 
+### 3.2 `wd add` — ワークツリー追加
+
+**書式**: `wd add <branch> [-b]`
+
+**処理フロー**:
+
+```
+1. カレントディレクトリから親方向へ .bare/ を探索してプロジェクトルートを特定
+2. プロジェクトルートが見つからない → エラー終了
+3. 同名のワークツリーが既存なら → エラー終了
+4. -b 指定あり → git worktree add -b <branch> <branch> (新規ブランチ作成)
+   -b 指定なし → git worktree add <branch> <branch> (既存ブランチをチェックアウト)
+5. 作成されたワークツリーのパスを stdout に出力
+```
+
 ## 4. 設定
 
 | 変数      | デフォルト       | 説明                                 |
@@ -104,19 +119,21 @@ set -eu
 
 WD_VERSION="dev"
 
-# --- utils ---         共通関数 (die, parse_repo_url, detect_default_branch)
+# --- utils ---         共通関数 (die, parse_repo_url, detect_default_branch, find_project_root)
 # --- cmd_clone ---     wd clone の実装
+# --- cmd_add ---       wd add の実装
 # --- usage ---         ヘルプ表示
 # --- main ---          引数パース、サブコマンドディスパッチ
 ```
 
 ### 5.2 共通関数
 
-| 関数                    | 説明                                           |
-| ----------------------- | ---------------------------------------------- |
-| `die <message>`         | エラーメッセージを stderr に出力して exit 1    |
-| `parse_repo_url <url>`  | SSH URL を `host/owner/repo` 形式に正規化      |
-| `detect_default_branch` | origin/HEAD → main → master の順でブランチ検出 |
+| 関数                    | 説明                                             |
+| ----------------------- | ------------------------------------------------ |
+| `die <message>`         | エラーメッセージを stderr に出力して exit 1      |
+| `parse_repo_url <url>`  | SSH URL を `host/owner/repo` 形式に正規化        |
+| `detect_default_branch` | origin/HEAD → main → master の順でブランチ検出   |
+| `find_project_root`     | カレントディレクトリから親方向へ `.bare/` を探索 |
 
 ## 6. 制約と互換性
 

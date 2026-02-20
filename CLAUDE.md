@@ -10,7 +10,7 @@ bare clone + git worktreeによるリポジトリ管理CLI。単一のPOSIX sh�
 
 - **POSIX sh互換** — `#!/bin/sh`で動作すること。`local`, 配列, `[[ ]]`, `pipefail`等のbash拡張は禁止
 - **単一ファイル** — `wd`ファイルに全コマンドを実装。ビルドステップなし
-- **セクション順序** — utils → cmd_clone → usage → main
+- **セクション順序** — utils → cmd_clone → cmd_add → usage → main
 - **変数名** — グローバル変数汚染を避けるため`_`接頭辞を使用し、関数末尾で`unset`する
 
 ## コマンド
