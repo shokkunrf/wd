@@ -2,7 +2,7 @@
 set -eu
 
 # wd installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/shokkunrf/wd/main/install.sh | sh
+# Usage: curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh | sh
 
 REPO="shokkunrf/wd"
 INSTALL_DIR="${WD_INSTALL_DIR:-/usr/local/bin}"

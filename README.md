@@ -7,7 +7,7 @@ A POSIX sh script that manages repositories with bare clone + git worktree. Uses
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/shokkunrf/wd/main/install.sh | sh
+curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh | sh
 ```
 
 Set `WD_INSTALL_DIR` to change the install location (default: `/usr/local/bin`).
