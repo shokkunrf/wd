@@ -335,7 +335,7 @@ cmd_remove() {
 
 usage() {
   cat <<'EOF'
-wd - git worktree for devcontainer: bare clone + worktree repository manager
+wd - git worktree manager with devcontainer support
 
 Usage: wd <command> [options]
 

@@ -1,6 +1,6 @@
 # `wd` 技術設計書
 
-**wd** (git **w**orktree for **d**evcontainer) — bare clone + git worktree によるリポジトリ管理 CLI
+**wd** — git worktree manager with devcontainer support
 
 ## 1. 目的と背景
 
@@ -30,16 +30,25 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
             ├── .bare/                     # bare git データベース
             ├── .git                       # pointer file ("gitdir: ./.bare")
             ├── .devcontainer -> <default-branch>/.devcontainer  # symlink
-            └── <default-branch>/          # デフォルトワークツリー
-                ├── .devcontainer/
-                │   └── devcontainer.json
-                └── ...
+            ├── <default-branch>/          # デフォルトワークツリー (clone時に作成)
+            ├── wt-<branch>/               # wd add で追加したワークツリー
+            └── pr-<number>/               # wd add --pr で追加した PR ワークツリー
 ```
 
 ### 2.1 プロジェクトの識別
 
 - **プロジェクトルート**: `.bare/` ディレクトリを含むディレクトリ
 - **検出**: カレントディレクトリから親方向へ `.bare/` を探索
+
+### 2.2 ワークツリーの命名規則
+
+| 種別             | ディレクトリ名   | 作成元                |
+| ---------------- | ---------------- | --------------------- |
+| デフォルト       | `<branch>`       | `wd clone`            |
+| ブランチ作業用   | `wt-<branch>`    | `wd add`              |
+| PR レビュー用    | `pr-<number>`    | `wd add --pr`         |
+
+デフォルトワークツリーは `.devcontainer` symlink の参照先として保護され、`wd remove` で削除できない。
 
 ## 3. コマンド仕様
 
@@ -60,18 +69,45 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 6. git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
 7. git fetch origin
 8. デフォルトブランチを決定:
-   a. -b 指定あり → そのブランチ
-   b. 空リポジトリ (-b なし) → エラー
-   c. refs/remotes/origin/HEAD から取得
-   d. main → master の順にフォールバック
-   e. いずれも見つからない → エラー (-b を案内)
-9. 空リポジトリ → git worktree add --orphan -b <branch>
-   通常 → git worktree add <branch> <branch>
+   a. -b 指定あり → そのブランチ (リモートに存在しなければエラー)
+   b. git symbolic-ref HEAD でベアリポジトリの HEAD から取得
+   c. いずれも見つからない → エラー (-b を案内)
+9. リモートにブランチが存在 → git worktree add <branch> <branch>
+   空リポジトリ → git worktree add --orphan -b <branch> <branch>
 10. <branch>/.devcontainer が存在すれば symlink を作成
 11. プロジェクトディレクトリのパスを stdout に出力
 ```
 
-### 3.2 `wd add` — ワークツリー追加
+### 3.2 `wd list` — プロジェクト一覧
+
+**書式**: `wd list [--full-path] [--worktrees]`
+
+**処理フロー**:
+
+```
+1. $WD_ROOT 配下から .bare ディレクトリを検索 (glob: */*/*)
+2. 各 .bare の親ディレクトリがプロジェクトルート
+3. $WD_ROOT/ プレフィックスを除去して host/owner/repo 形式で出力
+4. --full-path: 絶対パスで出力
+5. --worktrees: 各プロジェクトのワークツリーも一覧に含める
+```
+
+**出力例**:
+
+```
+github.com/owner1/repo1
+github.com/owner2/repo2
+```
+
+`--worktrees` 使用時:
+
+```
+github.com/owner1/repo1/main
+github.com/owner1/repo1/wt-feature-x
+github.com/owner2/repo2/main
+```
+
+### 3.3 `wd add` — ワークツリー追加
 
 **書式**: `wd add <branch> [-b]` / `wd add --pr <number>`
 
@@ -80,14 +116,18 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 ```
 1. カレントディレクトリから親方向へ .bare/ を探索してプロジェクトルートを特定
 2. プロジェクトルートが見つからない → エラー終了
-3. 同名のワークツリーが既存なら → エラー終了
-4. --pr 指定 → git fetch origin pull/<number>/head:pr-<number> + worktree add (pr-<number> ディレクトリ)
-5. -b 指定あり → git worktree add -b <branch> wt-<branch> (新規ブランチ作成)
-   -b 指定なし → git worktree add wt-<branch> <branch> (既存ブランチをチェックアウト)
-6. 作成されたワークツリーのパスを stdout に出力
+3. --pr 指定:
+   a. pr-<number> ディレクトリが既存なら → エラー終了
+   b. git fetch origin pull/<number>/head:pr-<number>
+   c. git worktree add pr-<number> pr-<number>
+4. 通常:
+   a. wt-<branch> ディレクトリが既存なら → エラー終了
+   b. -b 指定あり → git worktree add wt-<branch> -b <branch> (新規ブランチ作成)
+      -b 指定なし → git worktree add wt-<branch> <branch> (既存ブランチをチェックアウト)
+5. 作成されたワークツリーのパスを stdout に出力
 ```
 
-### 3.3 `wd remove` — ワークツリー削除
+### 3.4 `wd remove` — ワークツリー削除
 
 **書式**: `wd remove <name>... [-b|--branch]` / `wd remove -a [-b|--branch]`
 
@@ -96,30 +136,12 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 ```
 1. カレントディレクトリから親方向へ .bare/ を探索してプロジェクトルートを特定
 2. プロジェクトルートが見つからない → エラー終了
-3. -a 指定 → デフォルト以外の全ワークツリーを対象 (確認プロンプト付き)
-4. デフォルトワークツリーは削除をスキップ (警告表示)
-5. git worktree remove でワークツリーを削除
-6. -b/--branch 指定時は対応するブランチも削除
-```
-
-### 3.4 `wd list` — プロジェクト一覧
-
-**書式**: `wd list [query] [--full-path] [--worktrees]`
-
-**処理フロー**:
-
-```
-1. $WD_ROOT 配下から .bare ディレクトリを再帰検索
-2. 各 .bare の親ディレクトリがプロジェクトルート
-3. $WD_ROOT/ プレフィックスを除去して host/owner/repo 形式で出力
-4. アルファベット順にソート
-```
-
-**出力例**:
-
-```
-github.com/owner1/repo1
-github.com/owner2/repo2
+3. デフォルトワークツリーを特定 (.devcontainer symlink の参照先、または wt-/pr- 以外のワークツリー)
+4. -a 指定 → デフォルト以外の全ワークツリーを対象
+5. デフォルトワークツリーの削除は拒否
+6. 指定されたワークツリーが存在しない → エラー終了
+7. git worktree remove でワークツリーを削除
+8. -b/--branch 指定時は対応するブランチも git branch -D で削除
 ```
 
 ## 4. 設定
@@ -155,23 +177,24 @@ set -eu
 
 WD_VERSION="dev"
 
-# --- utils ---         共通関数 (die, parse_repo_url, detect_default_branch, find_project_root)
+# --- utils ---         共通関数 (die, parse_repo_url, find_project_root, list_worktrees, get_default_worktree)
 # --- cmd_clone ---     wd clone の実装
-# --- cmd_add ---       wd add の実装
-# --- cmd_remove ---    wd remove の実装
 # --- cmd_list ---      wd list の実装
+# --- cmd_add ---       wd add の実装
+# --- cmd_remove ---    wd remove の実装 (_remove_one ヘルパー含む)
 # --- usage ---         ヘルプ表示
 # --- main ---          引数パース、サブコマンドディスパッチ
 ```
 
 ### 5.2 共通関数
 
-| 関数                    | 説明                                             |
-| ----------------------- | ------------------------------------------------ |
-| `die <message>`         | エラーメッセージを stderr に出力して exit 1      |
-| `parse_repo_url <url>`  | SSH URL を `host/owner/repo` 形式に正規化        |
-| `detect_default_branch` | origin/HEAD → main → master の順でブランチ検出   |
-| `find_project_root`     | カレントディレクトリから親方向へ `.bare/` を探索 |
+| 関数                             | 説明                                                       |
+| -------------------------------- | ---------------------------------------------------------- |
+| `die <message>`                  | エラーメッセージを stderr に出力して exit 1                |
+| `parse_repo_url <url>`           | SSH URL を `host/owner/repo` 形式に正規化                  |
+| `find_project_root`              | カレントディレクトリから親方向へ `.bare/` を探索           |
+| `list_worktrees <project_root>`  | プロジェクト内のワークツリー名一覧を出力 (bare エントリ除外) |
+| `get_default_worktree <project_root>` | デフォルトワークツリー名を返す (.devcontainer 参照先 or wt-/pr- 以外) |
 
 ## 6. 制約と互換性
 

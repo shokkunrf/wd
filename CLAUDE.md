@@ -4,13 +4,13 @@
 
 ## プロジェクト概要
 
-bare clone + git worktreeによるリポジトリ管理CLI。単一のPOSIX shスクリプト。
+git worktree manager with devcontainer support。単一のPOSIX shスクリプト。
 
 ## 開発ルール
 
 - **POSIX sh互換** — `#!/bin/sh`で動作すること。`local`, 配列, `[[ ]]`, `pipefail`等のbash拡張は禁止
 - **単一ファイル** — `wd`ファイルに全コマンドを実装。ビルドステップなし
-- **セクション順序** — utils → cmd_clone → cmd_add → cmd_remove → cmd_list → usage → main
+- **セクション順序** — utils → cmd_clone → cmd_list → cmd_add → cmd_remove → usage → main
 - **変数名** — グローバル変数汚染を避けるため`_`接頭辞を使用し、関数末尾で`unset`する
 
 ## コマンド
