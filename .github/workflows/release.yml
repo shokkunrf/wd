@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        run: shellcheck -s sh $(find . -name '*.sh')
+
+      - name: Prepare release assets
+        run: |
+          cp src/wd.sh wd
+          sed -i 's/WD_VERSION="dev"/WD_VERSION="'"${{ github.ref_name }}"'"/' wd
+          sha256sum wd > wd.sha256
+
+      - name: Create Release
+        run: gh release create "${{ github.ref_name }}" wd install.sh wd.sha256 --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

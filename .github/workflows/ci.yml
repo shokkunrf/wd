@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shfmt
+        run: sudo apt-get update && sudo apt-get install -y shfmt
+      - name: Run shfmt
+        run: shfmt -d -ln posix -i 2 -bn $(find . -name '*.sh')
+      - name: Run ShellCheck
+        run: shellcheck -s sh $(find . -name '*.sh')
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git
+        run: |
+          git config --global user.name "Test"
+          git config --global user.email "test@test.com"
+      - name: Run unit tests
+        run: sh tests/test_unit.sh
+      - name: Run integration tests
+        run: sh tests/test_integration.sh
