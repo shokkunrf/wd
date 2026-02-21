@@ -2,7 +2,7 @@
 
 git worktree manager with devcontainer support.
 
-A POSIX sh script that manages repositories with bare clone + git worktree. Uses a ghq-like directory layout and automates devcontainer integration.
+bare clone + git worktree でリポジトリを管理するPOSIX shスクリプト。ghqライクなディレクトリ配置で、devcontainerとの統合を自動化します。
 
 ## Install
 
@@ -10,7 +10,7 @@ A POSIX sh script that manages repositories with bare clone + git worktree. Uses
 curl -fsSL https://raw.githubusercontent.com/shokkunrf/wd/main/install.sh | sh
 ```
 
-Set `WD_INSTALL_DIR` to change the install location (default: `/usr/local/bin`).
+`WD_INSTALL_DIR`でインストール先を変更できます（デフォルト:`/usr/local/bin`）。
 
 ## Usage
 
@@ -52,14 +52,14 @@ $WD_ROOT/
 
 ## Tips
 
-Add the following to `.bashrc`/`.zshrc` for convenient `cd` integration.
-Replace `fzf` with `peco` or any selector of your choice.
+`.bashrc`/`.zshrc`に以下を追加すると、`cd`を伴う操作が便利になります。
+`fzf`の代わりに`peco`等のセレクターに置き換えられます。
 
 ```sh
-# Select a worktree with fzf and cd into it
+# fzf でワークツリーを選んで移動
 wcd() { dir=$(wd list --full-path --worktrees | fzf) && cd "$dir"; }
 
-# Add a worktree and cd into it
+# ワークツリー追加後に自動で移動
 wda() { dir=$(wd add "$@") && cd "$dir"; }
 ```
 
