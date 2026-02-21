@@ -1,10 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
-  workflow_dispatch:
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -24,7 +22,7 @@ jobs:
           sed -i 's/WD_VERSION="dev"/WD_VERSION="'"${{ github.ref_name }}"'"/' wd
           sha256sum wd > wd.sha256
 
-      - name: Create Release
-        run: gh release create "${{ github.ref_name }}" wd install.sh wd.sha256 --generate-notes
+      - name: Upload release assets
+        run: gh release upload "${{ github.ref_name }}" wd install.sh wd.sha256
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

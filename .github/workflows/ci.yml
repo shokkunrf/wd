@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [develop]
+    paths: ["**/*.sh"]
   pull_request:
+    paths: ["**/*.sh"]
   workflow_dispatch:
 
 jobs:
