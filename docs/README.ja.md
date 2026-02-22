@@ -26,6 +26,7 @@ Worktree Management:
   add --pr <number>                 Add PR review worktree
   remove <name>... [-b|--branch]    Remove worktree(s) and optionally branch
   remove -a [-b|--branch]           Remove all non-default worktrees
+  repair                            Repair worktree relative paths
 
 Options:
   --version    Show version

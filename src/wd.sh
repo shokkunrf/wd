@@ -57,6 +57,14 @@ list_worktrees() {
   unset _lw_root
 }
 
+write_relative_paths() {
+  _wrp_root="$1"
+  _wrp_name="$2"
+  echo "gitdir: ../.bare/worktrees/$_wrp_name" >"$_wrp_root/$_wrp_name/.git"
+  echo "../../../$_wrp_name/.git" >"$_wrp_root/.bare/worktrees/$_wrp_name/gitdir"
+  unset _wrp_root _wrp_name
+}
+
 get_default_worktree() {
   _gd_root="$1"
   if [ -L "$_gd_root/.devcontainer" ]; then
@@ -144,10 +152,11 @@ cmd_clone() {
 
   # create worktree
   if $_branch_exists; then
-    git -C "$_project_dir" worktree add --relative-paths "$_default_branch" "$_default_branch"
+    git -C "$_project_dir" worktree add "$_default_branch" "$_default_branch"
   else
-    git -C "$_project_dir" worktree add --relative-paths --orphan -b "$_default_branch" "$_default_branch"
+    git -C "$_project_dir" worktree add --orphan -b "$_default_branch" "$_default_branch"
   fi
+  write_relative_paths "$_project_dir" "$_default_branch"
 
   # symlink .devcontainer if present
   if [ -d "$_project_dir/$_default_branch/.devcontainer" ]; then
@@ -239,7 +248,8 @@ cmd_add() {
     _wt_dir="pr-$_pr_number"
     [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_wt_dir' already exists"
     git -C "$_project_dir" fetch origin "pull/$_pr_number/head:$_wt_dir"
-    git -C "$_project_dir" worktree add --relative-paths "$_wt_dir" "$_wt_dir"
+    git -C "$_project_dir" worktree add "$_wt_dir" "$_wt_dir"
+    write_relative_paths "$_project_dir" "$_wt_dir"
   else
     [ -n "$_branch" ] || {
       usage
@@ -248,10 +258,11 @@ cmd_add() {
     _wt_dir="wt-$_branch"
     [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_branch' already exists"
     if $_create; then
-      git -C "$_project_dir" worktree add --relative-paths "$_wt_dir" -b "$_branch"
+      git -C "$_project_dir" worktree add "$_wt_dir" -b "$_branch"
     else
-      git -C "$_project_dir" worktree add --relative-paths "$_wt_dir" "$_branch"
+      git -C "$_project_dir" worktree add "$_wt_dir" "$_branch"
     fi
+    write_relative_paths "$_project_dir" "$_wt_dir"
   fi
 
   echo "$_project_dir/$_wt_dir"
@@ -331,6 +342,29 @@ cmd_remove() {
   unset _delete_branch _remove_all _targets _project_dir _default_wt _wt
 }
 
+# --- cmd_repair ---
+
+cmd_repair() {
+  _project_dir=$(find_project_root) || die "not in a wd project"
+  _rp_wt_dir="$_project_dir/.bare/worktrees"
+  if [ ! -d "$_rp_wt_dir" ]; then
+    unset _project_dir _rp_wt_dir
+    return
+  fi
+  for _rp_entry in "$_rp_wt_dir"/*/; do
+    if [ ! -d "$_rp_entry" ]; then
+      continue
+    fi
+    _rp_name="${_rp_entry%/}"
+    _rp_name="${_rp_name##*/}"
+    if [ -d "$_project_dir/$_rp_name" ]; then
+      write_relative_paths "$_project_dir" "$_rp_name"
+      echo "Repaired worktree '$_rp_name'"
+    fi
+  done
+  unset _project_dir _rp_wt_dir _rp_entry _rp_name
+}
+
 # --- usage ---
 
 usage() {
@@ -348,6 +382,7 @@ Worktree Management:
   add --pr <number>               Add PR review worktree
   remove <name>... [-b] [--branch]  Remove worktree(s) and optionally branch
   remove -a [-b] [--branch]       Remove all non-default worktrees
+  repair                          Repair worktree relative paths
 
 Options:
   --version    Show version
@@ -379,6 +414,10 @@ main() {
   remove)
     shift
     cmd_remove "$@"
+    ;;
+  repair)
+    shift
+    cmd_repair "$@"
     ;;
   --version | -v) echo "wd version $WD_VERSION" ;;
   --help | -h | "") usage ;;

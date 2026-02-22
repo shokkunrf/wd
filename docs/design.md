@@ -144,6 +144,29 @@ github.com/owner2/repo2/main
 8. -b/--branch 指定時は対応するブランチも git branch -D で削除
 ```
 
+### 3.5 `wd repair` — ワークツリーパス修復
+
+**書式**: `wd repair`
+
+**背景**: `git worktree add`は`.git`と`gitdir`を絶対パスで設定するため、ホストとdevcontainerでパスが食い違い、gitが機能しなくなる。Git v2.48+の`--relative-paths`で解決できるが、Debian TrixieのGit v2.47.3では使えないため、`wd`は`write_relative_paths`で相対パスに書き換えている。`git worktree repair`を実行すると絶対パスに戻されるが、`wd repair`で再修復する。
+
+**処理フロー**:
+
+```
+1. カレントディレクトリから親方向へ .bare/を探索してプロジェクトルートを特定
+2. プロジェクトルートが見つからない → エラー終了
+3. .bare/worktrees/ディレクトリが存在しない → 何もせず正常終了
+4. .bare/worktrees/配下の各エントリをスキャン:
+   a. 対応するワークツリーディレクトリが存在しない → スキップ (手動削除済み)
+   b. 存在する → write_relative_pathsでパスを再書き込み
+5. 修復したワークツリー名をstdoutに出力
+```
+
+**設計判断**:
+
+- `git worktree list`ではなく `.bare/worktrees/*/`を直接スキャンする → gitがパスを解決できない状態でも動作
+- 引数なし。カレントプロジェクトの全ワークツリーを一括修復
+
 ## 4. 設定
 
 | 変数      | デフォルト       | 説明                                 |
@@ -182,19 +205,21 @@ WD_VERSION="dev"
 # --- cmd_list ---      wd list の実装
 # --- cmd_add ---       wd add の実装
 # --- cmd_remove ---    wd remove の実装 (_remove_one ヘルパー含む)
+# --- cmd_repair ---    wd repair の実装
 # --- usage ---         ヘルプ表示
 # --- main ---          引数パース、サブコマンドディスパッチ
 ```
 
 ### 5.2 共通関数
 
-| 関数                             | 説明                                                       |
-| -------------------------------- | ---------------------------------------------------------- |
-| `die <message>`                  | エラーメッセージを stderr に出力して exit 1                |
-| `parse_repo_url <url>`           | SSH URL を `host/owner/repo` 形式に正規化                  |
-| `find_project_root`              | カレントディレクトリから親方向へ `.bare/` を探索           |
-| `list_worktrees <project_root>`  | プロジェクト内のワークツリー名一覧を出力 (bare エントリ除外) |
+| 関数                                  | 説明                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------- |
+| `die <message>`                       | エラーメッセージを stderr に出力して exit 1                           |
+| `parse_repo_url <url>`                | SSH URL を `host/owner/repo` 形式に正規化                             |
+| `find_project_root`                   | カレントディレクトリから親方向へ `.bare/` を探索                      |
+| `list_worktrees <project_root>`       | プロジェクト内のワークツリー名一覧を出力 (bare エントリ除外)          |
 | `get_default_worktree <project_root>` | デフォルトワークツリー名を返す (.devcontainer 参照先 or wt-/pr- 以外) |
+| `write_relative_paths <root> <name>`  | ワークツリーの `.git` と `gitdir` を相対パスで再書き込み              |
 
 ## 6. 制約と互換性
 
@@ -202,6 +227,7 @@ WD_VERSION="dev"
 | ---------- | -------------------------------------------------------------------- |
 | シェル     | POSIX sh 互換 (`#!/bin/sh`)                                          |
 | 禁止機能   | `local`, 配列, `[[ ]]`, `=~`, `pipefail`, プロセス置換等の bash 拡張 |
+| Git        | >= 2.17.0（`git worktree add` の基本機能に依存）                     |
 | OS         | Linux, macOS                                                         |
 | Clone URL  | SSH (`git@host:owner/repo`) のみ                                     |
 | 外部ツール | なし。git と POSIX sh のみ                                           |

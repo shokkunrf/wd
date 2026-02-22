@@ -307,5 +307,72 @@ unset _orig_parse_repo_url
 teardown_test_env
 
 # ============================================================
+describe "cmd_repair"
+# ============================================================
+
+setup_test_env
+
+_source=$(create_local_bare_repo "$_test_tmpdir/source_repair")
+_orig_parse_repo_url=$(type parse_repo_url | tail -n +2)
+# shellcheck disable=SC2317
+parse_repo_url() { echo "github.com/test/repair-test"; } # monkey-patch
+_result=$(cmd_clone "$_source" 2>&3)
+_proj="$WD_ROOT/github.com/test/repair-test"
+
+cd "$_proj/main"
+
+it "repairs paths broken by git worktree repair"
+# Git v2.47: rewrites relative paths to absolute. cmd_repair restores them.
+# Git v2.48+: may keep relative paths. cmd_repair is idempotent, so still passes.
+git -C "$_proj" worktree repair 2>&3 >&3
+cmd_repair 2>&3 >&3
+_git_content=$(cat "$_proj/main/.git")
+assert_eq "gitdir: ../.bare/worktrees/main" "$_git_content"
+_gitdir_content=$(cat "$_proj/.bare/worktrees/main/gitdir")
+assert_eq "../../../main/.git" "$_gitdir_content"
+
+it "repairs absolute paths back to relative"
+# Overwrite with absolute paths (simulating git worktree repair behavior)
+echo "gitdir: $_proj/.bare/worktrees/main" >"$_proj/main/.git"
+echo "$_proj/main/.git" >"$_proj/.bare/worktrees/main/gitdir"
+cmd_repair 2>&3 >&3
+_git_content=$(cat "$_proj/main/.git")
+assert_eq "gitdir: ../.bare/worktrees/main" "$_git_content"
+_gitdir_content=$(cat "$_proj/.bare/worktrees/main/gitdir")
+assert_eq "../../../main/.git" "$_gitdir_content"
+
+it "repairs multiple worktrees"
+_result=$(cmd_add -b repair-multi 2>&3)
+# Overwrite both with absolute paths
+echo "gitdir: $_proj/.bare/worktrees/main" >"$_proj/main/.git"
+echo "$_proj/main/.git" >"$_proj/.bare/worktrees/main/gitdir"
+echo "gitdir: $_proj/.bare/worktrees/wt-repair-multi" >"$_proj/wt-repair-multi/.git"
+echo "$_proj/wt-repair-multi/.git" >"$_proj/.bare/worktrees/wt-repair-multi/gitdir"
+cmd_repair 2>&3 >&3
+_git_content=$(cat "$_proj/wt-repair-multi/.git")
+assert_eq "gitdir: ../.bare/worktrees/wt-repair-multi" "$_git_content"
+
+it "skips worktree entry when directory is missing"
+# Create a fake worktree entry with no matching directory
+mkdir -p "$_proj/.bare/worktrees/ghost"
+echo "fake" >"$_proj/.bare/worktrees/ghost/gitdir"
+_output=$(cmd_repair 2>&3)
+assert_not_contains "$_output" "ghost"
+
+it "no output when worktrees directory does not exist"
+rm -rf "$_proj/.bare/worktrees"
+_output=$(cmd_repair 2>&3)
+if [ -z "$_output" ]; then _pass; else _fail "expected no output, got: $_output"; fi
+
+it "fails outside project"
+cd "$_test_tmpdir"
+assert_exit_code 1 cmd_repair
+
+eval "$_orig_parse_repo_url"
+unset _orig_parse_repo_url
+
+teardown_test_env
+
+# ============================================================
 
 test_summary
