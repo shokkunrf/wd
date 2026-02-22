@@ -365,6 +365,20 @@ cmd_repair() {
   unset _project_dir _rp_wt_dir _rp_entry _rp_name
 }
 
+# --- cmd_update ---
+
+cmd_update() {
+  _ud_url="https://github.com/shokkunrf/wd/releases/latest/download/install.sh"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$_ud_url" | sh
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "$_ud_url" | sh
+  else
+    die "curl or wget is required"
+  fi
+  unset _ud_url
+}
+
 # --- usage ---
 
 usage() {
@@ -383,6 +397,9 @@ Worktree Management:
   remove <name>... [-b] [--branch]  Remove worktree(s) and optionally branch
   remove -a [-b] [--branch]       Remove all non-default worktrees
   repair                          Repair worktree relative paths
+
+General:
+  update                          Update wd to the latest version
 
 Options:
   --version    Show version
@@ -418,6 +435,10 @@ main() {
   repair)
     shift
     cmd_repair "$@"
+    ;;
+  update)
+    shift
+    cmd_update "$@"
     ;;
   --version | -v) echo "wd version $WD_VERSION" ;;
   --help | -h | "") usage ;;

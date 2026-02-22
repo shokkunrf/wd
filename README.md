@@ -28,6 +28,9 @@ Worktree Management:
   remove -a [-b|--branch]           Remove all non-default worktrees
   repair                            Repair worktree relative paths
 
+General:
+  update                            Update wd to the latest version
+
 Options:
   --version    Show version
   --help       Show this help

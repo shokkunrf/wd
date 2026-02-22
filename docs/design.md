@@ -167,6 +167,25 @@ github.com/owner2/repo2/main
 - `git worktree list`ではなく `.bare/worktrees/*/`を直接スキャンする → gitがパスを解決できない状態でも動作
 - 引数なし。カレントプロジェクトの全ワークツリーを一括修復
 
+### 3.6 `wd update` — セルフアップデート (General)
+
+**書式**: `wd update`
+
+**処理フロー**:
+
+```
+1. GitHub Releasesからinstall.shをダウンロード
+   - curl が利用可能 → curl -fsSL <url> | sh
+   - wget が利用可能 → wget -qO- <url> | sh
+   - いずれもなし → エラー終了
+2. install.shがダウンロード・checksum検証・インストールを実行
+```
+
+**設計判断**:
+
+- `install.sh`に既にダウンロード・checksum検証・インストールのロジックがあるため、それを再利用してロジックの重複を避ける
+- ネットワークアクセスが必要なため自動テスト対象外
+
 ## 4. 設定
 
 | 変数      | デフォルト       | 説明                                 |
@@ -206,6 +225,7 @@ WD_VERSION="dev"
 # --- cmd_add ---       wd add の実装
 # --- cmd_remove ---    wd remove の実装 (_remove_one ヘルパー含む)
 # --- cmd_repair ---    wd repair の実装
+# --- cmd_update ---    wd update の実装
 # --- usage ---         ヘルプ表示
 # --- main ---          引数パース、サブコマンドディスパッチ
 ```

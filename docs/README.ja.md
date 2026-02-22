@@ -7,7 +7,7 @@ bare clone + git worktree でリポジトリを管理するPOSIX shスクリプ�
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/shokkunrf/wd/main/install.sh | sh
+curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh | sh
 ```
 
 `WD_INSTALL_DIR`でインストール先を変更できます（デフォルト:`/usr/local/bin`）。
@@ -27,6 +27,9 @@ Worktree Management:
   remove <name>... [-b|--branch]    Remove worktree(s) and optionally branch
   remove -a [-b|--branch]           Remove all non-default worktrees
   repair                            Repair worktree relative paths
+
+General:
+  update                            Update wd to the latest version
 
 Options:
   --version    Show version
