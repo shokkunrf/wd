@@ -61,7 +61,7 @@ $WD_ROOT/
 
 ```sh
 # fzf でワークツリーを選んで移動
-wdc() { dir=$(wd list --full-path --worktrees | fzf) && cd "$dir"; }
+wds() { dir=$(wd list | fzf) && cd "${WD_ROOT:-$HOME/Repositories}/$dir"; }
 
 # ワークツリー追加後に自動で移動
 wda() { dir=$(wd add "$@") && cd "$dir"; }

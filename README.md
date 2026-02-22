@@ -61,7 +61,7 @@ Replace `fzf` with `peco` or any selector of your choice.
 
 ```sh
 # Select a worktree with fzf and cd into it
-wdc() { dir=$(wd list --full-path --worktrees | fzf) && cd "$dir"; }
+wds() { dir=$(wd list | fzf) && cd "${WD_ROOT:-$HOME/Repositories}/$dir"; }
 
 # Add a worktree and cd into it
 wda() { dir=$(wd add "$@") && cd "$dir"; }
