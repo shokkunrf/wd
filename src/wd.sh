@@ -144,9 +144,9 @@ cmd_clone() {
 
   # create worktree
   if $_branch_exists; then
-    git -C "$_project_dir" worktree add "$_default_branch" "$_default_branch"
+    git -C "$_project_dir" worktree add --relative-paths "$_default_branch" "$_default_branch"
   else
-    git -C "$_project_dir" worktree add --orphan -b "$_default_branch" "$_default_branch"
+    git -C "$_project_dir" worktree add --relative-paths --orphan -b "$_default_branch" "$_default_branch"
   fi
 
   # symlink .devcontainer if present
@@ -239,7 +239,7 @@ cmd_add() {
     _wt_dir="pr-$_pr_number"
     [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_wt_dir' already exists"
     git -C "$_project_dir" fetch origin "pull/$_pr_number/head:$_wt_dir"
-    git -C "$_project_dir" worktree add "$_wt_dir" "$_wt_dir"
+    git -C "$_project_dir" worktree add --relative-paths "$_wt_dir" "$_wt_dir"
   else
     [ -n "$_branch" ] || {
       usage
@@ -248,9 +248,9 @@ cmd_add() {
     _wt_dir="wt-$_branch"
     [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_branch' already exists"
     if $_create; then
-      git -C "$_project_dir" worktree add "$_wt_dir" -b "$_branch"
+      git -C "$_project_dir" worktree add --relative-paths "$_wt_dir" -b "$_branch"
     else
-      git -C "$_project_dir" worktree add "$_wt_dir" "$_branch"
+      git -C "$_project_dir" worktree add --relative-paths "$_wt_dir" "$_branch"
     fi
   fi
 
