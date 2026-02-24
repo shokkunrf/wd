@@ -20,6 +20,7 @@ jobs:
         run: |
           cp src/wd.sh wd
           sed -i 's/WD_VERSION="dev"/WD_VERSION="'"${{ github.ref_name }}"'"/' wd
+          sed -i 's/VERSION="latest"/VERSION="'"${{ github.ref_name }}"'"/' install.sh
           sha256sum wd > wd.sha256
 
       - name: Upload release assets
