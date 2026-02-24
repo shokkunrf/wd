@@ -4,7 +4,7 @@ set -eu
 # wd installer
 # Usage: curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh | sh
 
-REPO="shokkunrf/wd"
+VERSION="latest"
 INSTALL_DIR="${WD_INSTALL_DIR:-/usr/local/bin}"
 
 die() {
@@ -52,14 +52,17 @@ verify_checksum() {
 main() {
   echo "Installing wd..."
 
-  # Get latest release tag
-  _latest=$(fetch "https://api.github.com/repos/$REPO/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
-  if [ -z "$_latest" ]; then
-    die "Failed to detect latest release"
+  if [ "$VERSION" = "latest" ]; then
+    _version=$(fetch "https://api.github.com/repos/shokkunrf/wd/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+    if [ -z "$_version" ]; then
+      die "Failed to detect latest release"
+    fi
+  else
+    _version="$VERSION"
   fi
-  echo "Latest version: $_latest"
+  echo "Installing version: $_version"
 
-  _base_url="https://github.com/$REPO/releases/download/$_latest"
+  _base_url="https://github.com/shokkunrf/wd/releases/download/$_version"
   _tmpdir=$(mktemp -d)
   trap 'rm -rf "$_tmpdir"' EXIT
 
@@ -83,7 +86,7 @@ main() {
     sudo cp "$_tmpdir/wd" "$INSTALL_DIR/wd"
   fi
 
-  echo "wd $_latest installed to $INSTALL_DIR/wd"
+  echo "wd $VERSION installed to $INSTALL_DIR/wd"
   "$INSTALL_DIR/wd" --version
 }
 
