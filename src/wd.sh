@@ -57,6 +57,10 @@ list_worktrees() {
   unset _lw_root
 }
 
+sanitize_branch() {
+  echo "$1" | tr '/' '-'
+}
+
 write_relative_paths() {
   _wrp_root="$1"
   _wrp_name="$2"
@@ -151,20 +155,21 @@ cmd_clone() {
   fi
 
   # create worktree
+  _wt_name=$(sanitize_branch "$_default_branch")
   if $_branch_exists; then
-    git -C "$_project_dir" worktree add "$_default_branch" "$_default_branch"
+    git -C "$_project_dir" worktree add "$_wt_name" "$_default_branch"
   else
-    git -C "$_project_dir" worktree add --orphan -b "$_default_branch" "$_default_branch"
+    git -C "$_project_dir" worktree add --orphan -b "$_default_branch" "$_wt_name"
   fi
-  write_relative_paths "$_project_dir" "$_default_branch"
+  write_relative_paths "$_project_dir" "$_wt_name"
 
   # symlink .devcontainer if present
-  if [ -d "$_project_dir/$_default_branch/.devcontainer" ]; then
-    ln -s "$_default_branch/.devcontainer" "$_project_dir/.devcontainer"
+  if [ -d "$_project_dir/$_wt_name/.devcontainer" ]; then
+    ln -s "$_wt_name/.devcontainer" "$_project_dir/.devcontainer"
   fi
 
   echo "$_project_dir"
-  unset _branch _url _parsed _project_dir _head_branch _default_branch _branch_exists
+  unset _branch _url _parsed _project_dir _head_branch _default_branch _branch_exists _wt_name
 }
 
 # --- cmd_list ---
@@ -255,7 +260,7 @@ cmd_add() {
       usage
       exit 1
     }
-    _wt_dir="wt-$_branch"
+    _wt_dir="wt-$(sanitize_branch "$_branch")"
     [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_branch' already exists"
     if $_create; then
       git -C "$_project_dir" worktree add "$_wt_dir" -b "$_branch"

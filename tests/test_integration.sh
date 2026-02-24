@@ -193,6 +193,15 @@ it "creates new branch with -b and wt- prefix"
 _result=$(cmd_add -b newbranch 2>&3)
 if [ -d "$_proj/wt-newbranch" ]; then _pass; else _fail "worktree not found"; fi
 
+it "handles branch name with slashes"
+git -C "$_source" checkout -b features/add-wd 2>&3 >&3
+echo "slash" >"$_source/slash.txt"
+git -C "$_source" add -A 2>&3 >&3
+git -C "$_source" commit -m "slash branch" 2>&3 >&3
+git -C "$_proj" fetch origin 2>&3 >&3
+_result=$(cmd_add features/add-wd 2>&3)
+if [ -d "$_proj/wt-features-add-wd" ]; then _pass; else _fail "worktree not found"; fi
+
 it "adds PR worktree with pr- prefix"
 _result=$(cmd_add --pr 12 2>&3)
 if [ -d "$_proj/pr-12" ]; then _pass; else _fail "pr-12 directory not found"; fi
