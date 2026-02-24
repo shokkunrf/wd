@@ -1,6 +1,6 @@
 # wd
 
-git worktree manager with devcontainer support.
+CLI tool for managing git worktrees with devcontainer support.
 
 A POSIX sh script that manages repositories with bare clone + git worktree. Uses a ghq-like directory layout and automates devcontainer integration.
 
