@@ -12,6 +12,18 @@ curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh |
 
 `WD_INSTALL_DIR`でインストール先を変更できます（デフォルト:`/usr/local/bin`）。
 
+### Dev Container Feature
+
+`devcontainer.json`に以下を追加:
+
+```json
+{
+  "features": {
+    "ghcr.io/shokkunrf/devcontainer-features/wd:latest": {}
+  }
+}
+```
+
 ## Usage
 
 ```

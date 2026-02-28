@@ -12,6 +12,18 @@ curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh |
 
 Set `WD_INSTALL_DIR` to change the install location (default: `/usr/local/bin`).
 
+### Dev Container Feature
+
+Add to your `devcontainer.json`:
+
+```json
+{
+  "features": {
+    "ghcr.io/shokkunrf/devcontainer-features/wd:latest": {}
+  }
+}
+```
+
 ## Usage
 
 ```
