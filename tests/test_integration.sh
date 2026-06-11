@@ -193,6 +193,46 @@ it "creates new branch with -b and wt- prefix"
 _result=$(cmd_add -b newbranch 2>&3)
 if [ -d "$_proj/wt-newbranch" ]; then _pass; else _fail "worktree not found"; fi
 
+it "new branch without base starts from the default branch"
+_base_sha=$(git -C "$_proj" rev-parse main)
+_new_sha=$(git -C "$_proj" rev-parse newbranch)
+assert_eq "$_base_sha" "$_new_sha"
+
+it "rejects duplicate worktree with -b"
+assert_exit_code 1 cmd_add -b newbranch
+
+it "creates new branch from a base with -b <branch> <base>"
+_result=$(cmd_add -b from-base feature-1 2>&3)
+if [ -d "$_proj/wt-from-base" ]; then _pass; else _fail "worktree not found"; fi
+
+it "new branch points at the base commit"
+_base_sha=$(git -C "$_proj" rev-parse feature-1)
+_new_sha=$(git -C "$_proj" rev-parse from-base)
+assert_eq "$_base_sha" "$_new_sha"
+
+it "writes relative gitdir path for the -b worktree"
+assert_eq "gitdir: ../.bare/worktrees/wt-from-base" "$(cat "$_proj/wt-from-base/.git")"
+
+it "creates new branch from a remote-tracking base"
+_result=$(cmd_add -b from-remote origin/feature-1 2>&3)
+_base_sha=$(git -C "$_proj" rev-parse origin/feature-1)
+_new_sha=$(git -C "$_proj" rev-parse from-remote)
+assert_eq "$_base_sha" "$_new_sha"
+
+it "creates new branch from a tag base"
+git -C "$_source" tag v1.0 feature-1 2>&3 >&3
+git -C "$_proj" fetch origin --tags 2>&3 >&3
+_result=$(cmd_add -b from-tag v1.0 2>&3)
+_base_sha=$(git -C "$_proj" rev-parse "v1.0^{commit}")
+_new_sha=$(git -C "$_proj" rev-parse from-tag)
+assert_eq "$_base_sha" "$_new_sha"
+
+it "creates new branch from a commit-hash base"
+_hash=$(git -C "$_proj" rev-parse origin/feature-1)
+_result=$(cmd_add -b from-hash "$_hash" 2>&3)
+_new_sha=$(git -C "$_proj" rev-parse from-hash)
+assert_eq "$_hash" "$_new_sha"
+
 it "handles branch name with slashes"
 git -C "$_source" checkout -b features/add-wd 2>&3 >&3
 echo "slash" >"$_source/slash.txt"
@@ -201,6 +241,10 @@ git -C "$_source" commit -m "slash branch" 2>&3 >&3
 git -C "$_proj" fetch origin 2>&3 >&3
 _result=$(cmd_add features/add-wd 2>&3)
 if [ -d "$_proj/wt-features-add-wd" ]; then _pass; else _fail "worktree not found"; fi
+
+it "handles -b branch name with slashes"
+_result=$(cmd_add -b feat/slashy 2>&3)
+if [ -d "$_proj/wt-feat-slashy" ]; then _pass; else _fail "worktree not found"; fi
 
 it "adds PR worktree with pr- prefix"
 _result=$(cmd_add --pr 12 2>&3)
@@ -217,6 +261,9 @@ assert_exit_code 1 cmd_add --pr 12
 it "--pr requires an argument"
 assert_exit_code 1 cmd_add --pr
 
+it "-b requires an argument"
+assert_exit_code 1 cmd_add -b
+
 it "fails with no arguments"
 assert_exit_code 1 cmd_add
 
@@ -225,6 +272,9 @@ assert_exit_code 1 cmd_add --unknown
 
 it "fails with too many arguments"
 assert_exit_code 1 cmd_add branch1 branch2
+
+it "fails with -b and too many positional arguments"
+assert_exit_code 1 cmd_add -b newbr base extra
 
 it "fails outside project"
 cd "$_test_tmpdir"
