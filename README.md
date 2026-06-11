@@ -34,7 +34,8 @@ Project Management:
   list [--full-path] [--worktrees]  List managed projects
 
 Worktree Management:
-  add <branch> [-b]                 Add worktree (-b: create new branch)
+  add <branch>                      Add worktree from a branch or commit-ish
+  add -b <branch> [<base>]          Add worktree, creating <branch> from <base>
   add --pr <number>                 Add PR review worktree
   remove <name>... [-b|--branch]    Remove worktree(s) and optionally branch
   remove -a [-b|--branch]           Remove all non-default worktrees

@@ -42,11 +42,11 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 
 ### 2.2 ワークツリーの命名規則
 
-| 種別             | ディレクトリ名   | 作成元                |
-| ---------------- | ---------------- | --------------------- |
-| デフォルト       | `<branch>`       | `wd clone`            |
-| ブランチ作業用   | `wt-<branch>`    | `wd add`              |
-| PR レビュー用    | `pr-<number>`    | `wd add --pr`         |
+| 種別           | ディレクトリ名 | 作成元        |
+| -------------- | -------------- | ------------- |
+| デフォルト     | `<branch>`     | `wd clone`    |
+| ブランチ作業用 | `wt-<branch>`  | `wd add`      |
+| PR レビュー用  | `pr-<number>`  | `wd add --pr` |
 
 デフォルトワークツリーは `.devcontainer` symlink の参照先として保護され、`wd remove` で削除できない。
 
@@ -109,7 +109,19 @@ github.com/owner2/repo2/main
 
 ### 3.3 `wd add` — ワークツリー追加
 
-**書式**: `wd add <branch> [-b]` / `wd add --pr <number>`
+**書式**: `wd add <branch>` / `wd add -b <branch> [<base>]` / `wd add --pr <number>`
+
+**引数の対応** (`git worktree add` に準拠、`<path>` は `wt-<branch>` を自動導出):
+
+| `git worktree add`                              | `wd add`                    |
+| ----------------------------------------------- | --------------------------- |
+| `git worktree add <path> <commit-ish>`          | `wd add <branch>`           |
+| `git worktree add -b <new> <path>`              | `wd add -b <branch>`        |
+| `git worktree add -b <new> <path> <commit-ish>` | `wd add -b <branch> <base>` |
+
+- `<base>` は git にそのまま渡る (ブランチ・リモート追跡ブランチ・タグ・コミットハッシュ)。省略時は bare リポジトリの HEAD (= 既定ブランチ) から分岐する
+- `-b` なしの位置引数も任意の commit-ish を受け付ける (ブランチ名以外は detached HEAD)
+- `-B` / `--detach` / `--track` / `--no-track` / `--` は対象外
 
 **処理フロー**:
 
@@ -120,11 +132,14 @@ github.com/owner2/repo2/main
    a. pr-<number> ディレクトリが既存なら → エラー終了
    b. git fetch origin pull/<number>/head:pr-<number>
    c. git worktree add pr-<number> pr-<number>
-4. 通常:
+4. -b 指定あり (新規ブランチ作成):
    a. wt-<branch> ディレクトリが既存なら → エラー終了
-   b. -b 指定あり → git worktree add wt-<branch> -b <branch> (新規ブランチ作成)
-      -b 指定なし → git worktree add wt-<branch> <branch> (既存ブランチをチェックアウト)
-5. 作成されたワークツリーのパスを stdout に出力
+   b. git worktree add wt-<branch> -b <branch> [<base>]
+5. -b 指定なし (commit-ish をチェックアウト):
+   a. 位置引数がなければ → usage 表示で終了
+   b. wt-<commit-ish> ディレクトリが既存なら → エラー終了
+   c. git worktree add wt-<commit-ish> <commit-ish>
+6. 作成されたワークツリーのパスを stdout に出力
 ```
 
 ### 3.4 `wd remove` — ワークツリー削除

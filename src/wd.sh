@@ -222,14 +222,17 @@ cmd_list() {
 # --- cmd_add ---
 
 cmd_add() {
-  _branch=""
+  _new_branch=""
   _create=false
+  _commitish=""
   _pr_number=""
   while [ $# -gt 0 ]; do
     case "$1" in
     -b | --branch)
+      [ $# -ge 2 ] || die "wd add: --branch requires an argument"
       _create=true
-      shift
+      _new_branch="$2"
+      shift 2
       ;;
     --pr)
       [ $# -ge 2 ] || die "wd add: --pr requires an argument"
@@ -240,8 +243,8 @@ cmd_add() {
       die "wd add: unknown option: $1"
       ;;
     *)
-      [ -z "$_branch" ] || die "wd add: too many arguments"
-      _branch="$1"
+      [ -z "$_commitish" ] || die "wd add: too many arguments"
+      _commitish="$1"
       shift
       ;;
     esac
@@ -255,23 +258,28 @@ cmd_add() {
     git -C "$_project_dir" fetch origin "pull/$_pr_number/head:$_wt_dir"
     git -C "$_project_dir" worktree add "$_wt_dir" "$_wt_dir"
     write_relative_paths "$_project_dir" "$_wt_dir"
+  elif $_create; then
+    _wt_dir="wt-$(sanitize_branch "$_new_branch")"
+    [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_new_branch' already exists"
+    if [ -n "$_commitish" ]; then
+      git -C "$_project_dir" worktree add "$_wt_dir" -b "$_new_branch" "$_commitish"
+    else
+      git -C "$_project_dir" worktree add "$_wt_dir" -b "$_new_branch"
+    fi
+    write_relative_paths "$_project_dir" "$_wt_dir"
   else
-    [ -n "$_branch" ] || {
+    [ -n "$_commitish" ] || {
       usage
       exit 1
     }
-    _wt_dir="wt-$(sanitize_branch "$_branch")"
-    [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_branch' already exists"
-    if $_create; then
-      git -C "$_project_dir" worktree add "$_wt_dir" -b "$_branch"
-    else
-      git -C "$_project_dir" worktree add "$_wt_dir" "$_branch"
-    fi
+    _wt_dir="wt-$(sanitize_branch "$_commitish")"
+    [ ! -d "$_project_dir/$_wt_dir" ] || die "worktree '$_commitish' already exists"
+    git -C "$_project_dir" worktree add "$_wt_dir" "$_commitish"
     write_relative_paths "$_project_dir" "$_wt_dir"
   fi
 
   echo "$_project_dir/$_wt_dir"
-  unset _branch _create _pr_number _project_dir _wt_dir
+  unset _new_branch _create _commitish _pr_number _project_dir _wt_dir
 }
 
 # --- cmd_remove ---
@@ -397,7 +405,8 @@ Project Management:
   list [--full-path] [--worktrees]  List managed projects
 
 Worktree Management:
-  add <branch> [-b]               Add worktree (-b: create new branch)
+  add <branch>                    Add worktree from a branch or commit-ish
+  add -b <branch> [<base>]        Add worktree, creating <branch> from <base>
   add --pr <number>               Add PR review worktree
   remove <name>... [-b] [--branch]  Remove worktree(s) and optionally branch
   remove -a [-b] [--branch]       Remove all non-default worktrees
