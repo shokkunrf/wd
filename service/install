@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+# 発行サービスをホストへ導入する: ハンドラをホスト設定領域へ、unitをsystemd userへ。
+
+set -eu
+
+here="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+install -D -m 755 "$here/wd-token-handler" "$HOME/.config/wd/bin/wd-token-handler"
+install -D -m 644 "$here/wd-token.socket" "$HOME/.config/systemd/user/wd-token.socket"
+install -D -m 644 "$here/wd-token@.service" "$HOME/.config/systemd/user/wd-token@.service"
+systemctl --user daemon-reload
+systemctl --user enable --now wd-token.socket
+echo "導入完了: ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/wd/token.sock"

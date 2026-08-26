@@ -1,0 +1,66 @@
+#!/bin/sh
+#
+# wd-token-handler — 発行ソケットの1接続ハンドラ(systemd socket activation、Accept=yes)。
+#
+# 要求(1行): token <名義> [リポ名...]
+# 応答(1行): ok <installation token> <失効時刻> / err <理由>
+#
+# 名義はホストの名義台帳(identities.yaml)のapp型エントリ。リポ名を渡すとトークンを
+# そのリポ集合へ限定して発行する。秘密鍵はこのハンドラだけが読み、応答には含めない。
+
+set -eu
+
+REGISTRY="${WD_IDENTITIES:-$HOME/.config/wd/identities.yaml}"
+
+err() { printf 'err %s\n' "$1"; exit 0; }
+
+get() {
+  awk -v id="$1" -v key="$2" '
+    $0 ~ "^  "id":$" { hit = 1; next }
+    hit && $0 ~ "^  [^ ]" { exit }
+    hit && $1 == key":" { print $2; exit }
+  ' "$REGISTRY"
+}
+
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+[ -r "$REGISTRY" ] || err "名義台帳が読めない: $REGISTRY"
+
+read -r verb name repos || err "要求が読めない"
+[ "$verb" = "token" ] || err "未知の要求: $verb"
+case "$name" in *[!A-Za-z0-9_-]* | '') err "名義名が不正" ;; esac
+
+type="$(get "$name" type)"
+[ "$type" = "app" ] || err "app型の名義ではない: $name"
+app_id="$(get "$name" app_id)"
+inst="$(get "$name" installation_id)"
+pem="$(get "$name" pem)"
+case "$pem" in "~/"*) pem="$HOME/${pem#"~/"}" ;; esac
+[ -n "$app_id" ] && [ -n "$inst" ] && [ -r "$pem" ] || err "台帳エントリが不完全: $name"
+
+# 時刻はGitHub側を基準にする(ホストの時計ズレでJWTのiatが未来になる事故の回避)
+gh_date="$(curl -fsI https://api.github.com 2>/dev/null | tr -d '\r' | sed -n 's/^[Dd]ate: //p')"
+if [ -n "$gh_date" ]; then now="$(date -d "$gh_date" +%s)"; else now="$(date +%s)"; fi
+
+header='{"alg":"RS256","typ":"JWT"}'
+payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$app_id")"
+signing_input="$(printf '%s' "$header" | b64url).$(printf '%s' "$payload" | b64url)"
+jwt="$signing_input.$(printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$pem" -binary | b64url)"
+
+api="https://api.github.com/app/installations/$inst/access_tokens"
+if [ -n "${repos:-}" ]; then
+  list=''
+  for r in $repos; do
+    case "$r" in *[!A-Za-z0-9._-]* | '') err "リポ名が不正: $r" ;; esac
+    list="$list\"$r\","
+  done
+  resp="$(curl -fsS -X POST -H "Authorization: Bearer $jwt" \
+    -H 'Content-Type: application/json' -d "{\"repositories\":[${list%,}]}" "$api")" || err "発行に失敗(リポ限定)"
+else
+  resp="$(curl -fsS -X POST -H "Authorization: Bearer $jwt" "$api")" || err "発行に失敗"
+fi
+
+tok="$(printf '%s' "$resp" | jq -r '.token // empty')"
+exp="$(printf '%s' "$resp" | jq -r '.expires_at // empty')"
+[ -n "$tok" ] || err "応答にtokenがない"
+printf 'ok %s %s\n' "$tok" "$exp"

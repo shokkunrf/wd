@@ -1,0 +1,11 @@
+[Unit]
+Description=wd token issuing handler
+CollectMode=inactive-or-failed
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/wd/bin/wd-token-handler
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=15
