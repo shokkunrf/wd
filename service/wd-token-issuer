@@ -1,0 +1,105 @@
+#!/bin/sh
+#
+# wd-token-issuer — per-connection handler for the token socket (systemd socket activation, Accept=yes).
+#
+# Request (one line):  token <identity> [repo...]
+# Response (one line): ok <installation token> <expires_at> | err <reason>
+#
+# The identity is an app-type entry in the identity registry (identities.yaml).
+# Passing repository names restricts the token to that set.
+
+set -euf
+export LC_ALL=C
+
+replied=''
+reason=''
+reply() {
+  replied=1
+  printf '%s\n' "$1"
+}
+log() { printf 'wd-token-issuer: %s\n' "$1" >&2; }
+# $1 is the response; $2, if given, goes to the journal instead (detail not returned to the requester)
+err() {
+  log "${2:-$1}"
+  reply "err $1"
+  exit 0
+}
+# Every exit path replies with exactly one line (the requester cannot tell silence from failure)
+# shellcheck disable=SC2154
+trap 's=$?; [ -n "$replied" ] || { log "${reason:-internal error}: exited before replying (status $s)"; printf "err %s\n" "${reason:-internal error (see journal)}"; }' EXIT
+trap 'reason="timed out"; [ -n "$replied" ] || exit 1' TERM
+
+for c in awk curl date openssl sed; do
+  command -v "$c" >/dev/null 2>&1 || err "missing dependency: $c"
+done
+case "$(date +%s 2>/dev/null)" in *[!0-9]* | '') err "date does not support +%s" ;; esac
+
+REGISTRY="${WD_IDENTITIES:-$HOME/.config/wd/identities.yaml}"
+
+get() {
+  awk -v id="$1" -v key="$2" '
+    $0 ~ "^  "id":$" { hit = 1; next }
+    hit && $0 ~ "^  [^ ]" { exit }
+    hit && $1 == key":" { print $2; exit }
+  ' "$REGISTRY"
+}
+
+b64url() { openssl base64 -A | sed 'y/+\//-_/; s/=*$//'; }
+printable() { sed 's/[^[:print:]]/?/g'; }
+field() { sed -n "s/.*\"$1\": *\"\\([^\"]*\\)\".*/\\1/p" | sed -n 1p; }
+
+[ -r "$REGISTRY" ] || err "cannot read identity registry" "cannot read identity registry: $REGISTRY"
+
+read -r line || err "cannot read request"
+cr="$(printf '\r')"
+line="${line%"$cr"}"
+[ ${#line} -le 4096 ] || err "request too long"
+# With set -f this is word splitting only
+# shellcheck disable=SC2086
+set -- $line
+[ "${1:-}" = "token" ] || err "unknown request" "unknown request: $(printf '%s' "${1:-}" | printable)"
+name="${2:-}"
+case "$name" in *[!A-Za-z0-9_-]* | '') err "invalid identity name" "invalid identity name: $(printf '%s' "$name" | printable)" ;; esac
+shift 2
+list=''
+for r in "$@"; do
+  case "$r" in *[!A-Za-z0-9._-]*) err "invalid repository name" "invalid repository name: $(printf '%s' "$r" | printable)" ;; esac
+  list="$list\"$r\","
+done
+
+type="$(get "$name" type)"
+[ -n "$type" ] || err "identity not in registry: $name"
+[ "$type" = "app" ] || err "identity is not app type: $name"
+app_id="$(get "$name" app_id)"
+inst="$(get "$name" installation_id)"
+pem="$(get "$name" pem)"
+# shellcheck disable=SC2088
+case "$pem" in "~/"*) pem="$HOME/${pem#"~/"}" ;; esac
+detail="app_id=${app_id:-none} installation_id=${inst:-none} pem=${pem:-none}"
+[ -z "$pem" ] || [ -r "$pem" ] || detail="$detail (unreadable)"
+[ -n "$app_id" ] && [ -n "$inst" ] && [ -r "$pem" ] || err "incomplete registry entry: $name" "incomplete registry entry: $name $detail"
+
+# A 10-minute JWT centered on now tolerates up to 5 minutes of host clock skew (GitHub caps exp at 10 minutes ahead)
+now="$(date +%s)"
+
+header='{"alg":"RS256","typ":"JWT"}'
+payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 300))" "$((now + 300))" "$app_id")"
+signing_input="$(printf '%s' "$header" | b64url).$(printf '%s' "$payload" | b64url)"
+jwt="$signing_input.$(printf '%s' "$signing_input" | openssl dgst -sha256 -sign "$pem" -binary | b64url)"
+
+api="https://api.github.com/app/installations/$inst/access_tokens"
+body='{}'
+[ -z "$list" ] || body="{\"repositories\":[${list%,}]}"
+# Keep the JWT out of argv (visible to other processes via /proc)
+resp="$(printf 'header = "Authorization: Bearer %s"\n' "$jwt" | curl -sS --max-time 8 -K - -X POST \
+  -H 'Accept: application/vnd.github+json' -H 'Content-Type: application/json' -d "$body" \
+  -w '\n%{http_code}' "$api" 2>&1)" || err "issue failed: connection" "cannot reach GitHub API: $(printf '%s\n' "$resp" | sed -n -e '/^curl: /{' -e p -e q -e '}')"
+status="$(printf '%s\n' "$resp" | sed -n '$p')"
+json="$(printf '%s\n' "$resp" | sed '$d')"
+[ "$status" = 201 ] || err "issue failed: HTTP $status" "issue failed: HTTP $status $(printf '%s\n' "$json" | field message)"
+
+tok="$(printf '%s\n' "$json" | field token)"
+exp="$(printf '%s\n' "$json" | field expires_at)"
+[ -n "$tok" ] || err "no token in response"
+log "issued: $name repos=[${list%,}] exp=$exp"
+reply "ok $tok $exp"
