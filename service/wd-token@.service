@@ -1,0 +1,11 @@
+[Unit]
+Description=wd token issuer
+CollectMode=inactive-or-failed
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/libexec/wd/wd-token-issuer
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+TimeoutStartSec=15
