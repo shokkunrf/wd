@@ -1,0 +1,39 @@
+# crateの追加と更新は、bans.allowの版を変えて人が承認する
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+
+[advisories]
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+allow = ["MIT"]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = false
+allow-workspace = true
+allow = [
+  { crate = "lexopt@=0.3.2", reason = "引数の解析" },
+]
+deny = [
+  { crate = "ctor", reason = "mainの前に走るコードを持ち込む" },
+  { crate = "linkme", reason = "リンクのときに集めるコードを持ち込む" },
+  { crate = "inventory", reason = "mainの前に走るコードを持ち込む" },
+]
+
+[bans.build]
+include-dependencies = true
+executables = "deny"
+interpreted = "deny"
+allow-build-scripts = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -1,34 +1,64 @@
 name: CI
 
 on:
-  push:
-    branches: [develop]
-    paths: ["**/*.sh"]
   pull_request:
-    paths: ["**/*.sh"]
-  workflow_dispatch:
+  push:
+    branches: [develop, v2/develop]
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+defaults:
+  run:
+    working-directory: app
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Install shfmt
-        run: sudo apt-get update && sudo apt-get install -y shfmt
-      - name: Run shfmt
-        run: shfmt -d -ln posix -i 2 -bn $(find . -name '*.sh')
-      - name: Run ShellCheck
-        run: shellcheck -s sh $(find . -name '*.sh')
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
 
-  test:
-    runs-on: ubuntu-latest
+  deny:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Configure git
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: cargo-denyを入れる
+        env:
+          CARGO_DENY_VERSION: 0.20.2
+          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
         run: |
-          git config --global user.name "Test"
-          git config --global user.email "test@test.com"
-      - name: Run unit tests
-        run: sh tests/test_unit.sh
-      - name: Run integration tests
-        run: sh tests/test_integration.sh
+          name="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/$name.tar.gz" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/$name.tar.gz"
+          echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          install -D -m 0755 "$RUNNER_TEMP/$name/cargo-deny" "$RUNNER_TEMP/bin/cargo-deny"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: cargo deny --locked check -D warnings
+
+  docker-tests:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: dockerが要る試験を走らせる
+        run: cargo test --locked -- --ignored
