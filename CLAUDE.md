@@ -20,10 +20,23 @@ botが書いたworkflowはマージの前のブランチでも動くので、影
 - `uses:`のactionはcommitのSHAで固定する。使うactionはshokkunrf/wdのGitHub Actionsの許可リストに入れ、追加はcrateと同じく人が承認する
 - workflowはリポのsecretを使わない
 
+## リリース
+
+`v<semver>`のタグをpushすると`.github/workflows/release.yml`が走る。タグから先頭の`v`を除いたものを`WD_VERSION`として実行ファイルに焼き込み、`.github/scripts/release-assets.sh`で検査してまとめ、`wd-<バージョン>-x86_64-unknown-linux-musl.tar.gz`と`SHA256SUMS`をReleaseに上げる。バージョンに`-`があればpre-releaseにする。
+
+wd#25でホストをRustのwdに切り替えるまでは、pre-releaseのタグだけを打つ。pre-releaseでないReleaseは`latest`になり、shellのwdの`wd update`と、`ghcr.io/shokkunrf/devcontainer-features/wd`のfeatureの既定が、それを入れるようになるためである。
+
+CIも`release-assets.sh`を同じ手順で走らせる。手元で走らせるには、musl-tools、cargo-about 0.9.3、dockerが要る。cargo-aboutとdockerは開発コンテナに無い。
+
+```sh
+WD_VERSION=0.0.0-ci .github/scripts/release-assets.sh <出力先>
+```
+
 ## ファイル構成
 
 - `app/` — 実行ファイルのcrate
 - `service/` — shellの発行サービス。wd#24で置き換えるまで使う
 - `install.sh` — Releaseからwdを入れるインストーラ
 - `.devcontainer/` — 開発コンテナ。Rustの道具はautopilot-sandboxのworkspaceのコンテナと同じ
-- `.github/workflows/` — CI
+- `.github/workflows/` — CIとリリース
+- `.github/scripts/release-assets.sh` — リリースと同じ手順で実行ファイルを作って検査し、Releaseに上げるものをまとめる。CIとリリースが呼ぶ

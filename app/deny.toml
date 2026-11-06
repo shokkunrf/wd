@@ -9,6 +9,7 @@ yanked = "deny"
 ignore = []
 
 [licenses]
+# 足すときはabout.tomlのacceptedにも足す
 allow = ["MIT"]
 confidence-threshold = 0.93
 

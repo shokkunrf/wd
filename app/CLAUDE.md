@@ -10,9 +10,10 @@ cargo clippy --locked --all-targets -- -D warnings      # lint
 cargo test --locked                                     # テスト
 cargo test --locked --target x86_64-unknown-linux-musl  # muslでのテスト
 cargo deny --locked check -D warnings                   # 依存の許可リスト、勧告、ライセンス、取得元
+cargo build --locked --release --target x86_64-unknown-linux-musl  # リリースと同じ静的リンクのビルド
 ```
 
-CIは`RUSTFLAGS=-D warnings`で走る。
+CIは`RUSTFLAGS=-D warnings`で走る。静的リンクになったかは、`readelf -lW target/x86_64-unknown-linux-musl/release/wd`にINTERPが無く、`readelf -dW`にNEEDEDが無いことで確かめる。
 
 ## 実装規約
 
@@ -38,7 +39,9 @@ CIは`RUSTFLAGS=-D warnings`で走る。
 | unwrapなどとprint系の禁止 | `Cargo.toml`の`[lints.clippy]`。`dbg!`と`.ok()`でResultを捨てることも禁じる。テストのunwrap、expect、`panic!`は`clippy.toml`の`allow-*-in-tests`で許す。それ以外をテストで使うときと、結合テストの`#[test]`の外の補助では、その場所に`allow`を付ける |
 | 外部コマンドとファイルシステムのラッパ | `clippy.toml`の`disallowed-methods`。ラッパの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと本物のgitを外から呼ぶので、ファイル全体で許す |
 | 依存の許可リスト、build script、禁じるcrate、勧告、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`の版の変更を伴い、人が承認する |
+| ライセンスの許可 | `deny.toml`の`licenses.allow`と`about.toml`の`accepted`。両方を揃えて変える |
 | コンパイラのバージョン | `rust-toolchain.toml` |
+| 静的リンク | `.github/scripts/release-assets.sh`のreadelfの検査。CIとリリースが同じものを走らせる |
 
 機械で確かめないもの。`_ = expr;`でResultを捨てることは捕まえるlintが無いので、レビューで見る。標準エラーへの書き込みの失敗だけは伝える先が無いので、`common::output::report`が文に`#[allow(clippy::let_underscore_must_use)]`を付けて捨てる。役割のモジュール同士を参照しないこと、検証済みの型、自前のマクロとasyncと参照を持つ構造体の禁止も、レビューで見る。
 
@@ -47,5 +50,6 @@ CIは`RUSTFLAGS=-D warnings`で走る。
 - `src/main.rs` — 引数の振り分け
 - `src/common/` — 役割に共通のもの。エラー、出力、バージョン
 - `tests/` — 実行ファイルを外から呼ぶ結合テスト
+- `about.toml`、`about.hbs` — リリースに同梱する依存の著作権表示の設定と雛形
 
 役割ごとのモジュール、`host`、`anywhere`、`internal`、`issuer`は、それを実装するtaskが`src/`に足す。
