@@ -45,3 +45,6 @@ cp "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" "$dir/COPYRI
 cp /usr/share/doc/musl/copyright "$dir/COPYRIGHT-musl"
 tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner -czf "$out/$name.tar.gz" "$name"
 (cd "$out" && sha256sum "$name.tar.gz" >SHA256SUMS)
+
+sed "s/^VERSION=\"\"\$/VERSION=\"$WD_VERSION\"/" "$root/install.sh" >"$out/install.sh"
+grep -qx "VERSION=\"$WD_VERSION\"" "$out/install.sh" || fail "install.shにバージョンを焼き込めない"

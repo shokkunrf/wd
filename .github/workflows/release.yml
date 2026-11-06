@@ -60,7 +60,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          set -- "$RUNNER_TEMP/dist/wd-$WD_VERSION-x86_64-unknown-linux-musl.tar.gz" "$RUNNER_TEMP/dist/SHA256SUMS"
+          set -- "$RUNNER_TEMP/dist/wd-$WD_VERSION-x86_64-unknown-linux-musl.tar.gz" "$RUNNER_TEMP/dist/SHA256SUMS" "$RUNNER_TEMP/dist/install.sh"
           case "$WD_VERSION" in
             *-*) set -- --prerelease "$@" ;;
           esac
