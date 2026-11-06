@@ -1,93 +1,48 @@
 #!/bin/sh
+# 使い方: curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh | sh
 set -eu
 
-# wd installer
-# Usage: curl -fsSL https://github.com/shokkunrf/wd/releases/latest/download/install.sh | sh
-
-VERSION="latest"
+VERSION=""
 INSTALL_DIR="${WD_INSTALL_DIR:-/usr/local/bin}"
+TARGET=x86_64-unknown-linux-musl
 
 die() {
-  echo "install: error: $*" >&2
+  echo "install: $*" >&2
   exit 1
 }
 
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1"
+    curl -fsSL -o "$2" "$1" || die "取れない: $1"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "$1"
+    wget -qO "$2" "$1" || die "取れない: $1"
   else
-    die "curl or wget is required"
+    die "curlかwgetが要る"
   fi
 }
 
-fetch_to_file() {
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "$2" "$1"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$2" "$1"
-  else
-    die "curl or wget is required"
-  fi
-}
+[ -n "$VERSION" ] || die "Releaseに上げたinstall.shを使う"
+platform="$(uname -s)-$(uname -m)"
+[ "$platform" = Linux-x86_64 ] || die "Linuxのx86_64にだけ入れられる: $platform"
+command -v sha256sum >/dev/null 2>&1 || die "sha256sumが要る"
+[ -d "$INSTALL_DIR" ] || die "入れる先が無い: $INSTALL_DIR"
 
-verify_checksum() {
-  _file="$1"
-  _expected="$2"
-  _actual=""
-  if command -v sha256sum >/dev/null 2>&1; then
-    _actual=$(sha256sum "$_file" | cut -d' ' -f1)
-  elif command -v shasum >/dev/null 2>&1; then
-    _actual=$(shasum -a 256 "$_file" | cut -d' ' -f1)
-  else
-    echo "warning: sha256sum/shasum not found, skipping checksum verification" >&2
-    return 0
-  fi
-  if [ "$_actual" != "$_expected" ]; then
-    die "Checksum mismatch: expected $_expected, got $_actual"
-  fi
-}
+name="wd-$VERSION-$TARGET"
+url="https://github.com/shokkunrf/wd/releases/download/v$VERSION"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 
-main() {
-  echo "Installing wd..."
-
-  if [ "$VERSION" = "latest" ]; then
-    _version=$(fetch "https://api.github.com/repos/shokkunrf/wd/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
-    if [ -z "$_version" ]; then
-      die "Failed to detect latest release"
-    fi
-  else
-    _version="$VERSION"
-  fi
-  echo "Installing version: $_version"
-
-  _base_url="https://github.com/shokkunrf/wd/releases/download/$_version"
-  _tmpdir=$(mktemp -d)
-  trap 'rm -rf "$_tmpdir"' EXIT
-
-  # Download wd and checksums
-  fetch_to_file "$_base_url/wd" "$_tmpdir/wd"
-  fetch_to_file "$_base_url/wd.sha256" "$_tmpdir/wd.sha256"
-
-  # Verify checksum
-  _expected=$(sed -n 's/  *wd$//p' "$_tmpdir/wd.sha256")
-  if [ -n "$_expected" ]; then
-    verify_checksum "$_tmpdir/wd" "$_expected"
-    echo "Checksum verified"
-  fi
-
-  # Install
-  chmod +x "$_tmpdir/wd"
-  if [ -w "$INSTALL_DIR" ]; then
-    cp "$_tmpdir/wd" "$INSTALL_DIR/wd"
-  else
-    echo "Installing to $INSTALL_DIR (requires sudo)"
-    sudo cp "$_tmpdir/wd" "$INSTALL_DIR/wd"
-  fi
-
-  echo "wd $VERSION installed to $INSTALL_DIR/wd"
-  "$INSTALL_DIR/wd" --version
-}
-
-main
+fetch "$url/$name.tar.gz" "$tmp/$name.tar.gz"
+fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS"
+sum="$(awk -v file="$name.tar.gz" '$2 == file' "$tmp/SHA256SUMS")"
+[ -n "$sum" ] || die "SHA256SUMSに$name.tar.gzが無い"
+(cd "$tmp" && echo "$sum" | sha256sum -c - >/dev/null) || die "SHA256SUMSと合わない"
+tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+if [ -w "$INSTALL_DIR" ]; then
+  install -m 0755 "$tmp/$name/wd" "$INSTALL_DIR/wd"
+elif command -v sudo >/dev/null 2>&1; then
+  sudo install -m 0755 "$tmp/$name/wd" "$INSTALL_DIR/wd"
+else
+  die "$INSTALL_DIRに書けず、sudoも無い"
+fi
+"$INSTALL_DIR/wd" --version

@@ -1,0 +1,13 @@
+wdが静的リンクするcrateの著作権表示とライセンス。
+Rustの標準ライブラリはCOPYRIGHT-rust-library.html、muslはCOPYRIGHT-muslにある。
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{{id}}})
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} {{{crate.repository}}}{{/if}}
+{{/each}}
+--------------------------------------------------------------------------------
+
+{{{text}}}
+{{/each}}

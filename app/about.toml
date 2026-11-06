@@ -1,0 +1,6 @@
+# 足すときはdeny.tomlのlicenses.allowにも足す
+accepted = ["MIT"]
+targets = ["x86_64-unknown-linux-musl"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
