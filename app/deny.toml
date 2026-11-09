@@ -1,0 +1,40 @@
+# Adding or updating a crate changes its version in bans.allow, and a human approves it.
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+
+[advisories]
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Keep in sync with accepted in about.toml.
+allow = ["MIT"]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = false
+allow-workspace = true
+allow = [
+  { crate = "lexopt@=0.3.2", reason = "argument parsing" },
+]
+deny = [
+  { crate = "ctor", reason = "runs code before main" },
+  { crate = "linkme", reason = "gathers code at link time" },
+  { crate = "inventory", reason = "runs code before main" },
+]
+
+[bans.build]
+include-dependencies = true
+executables = "deny"
+interpreted = "deny"
+allow-build-scripts = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -1,0 +1,11 @@
+[Unit]
+Description=wd token issuing socket
+
+[Socket]
+ListenStream=%t/wd/token.sock
+Accept=yes
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target
