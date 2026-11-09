@@ -27,6 +27,14 @@ botが書いたworkflowはマージの前のブランチでも動くので、影
 - workflowはリポのsecretを使わない
 - workflowを変えたら、`gh actions-lock`で`actions.lock`を作り直し、同じcommitに含める。`verify-lockfile.yml`が`gh actions-lock --verify`で照合する
 
+## リリース
+
+Releaseは人がGitHubで、`develop`のcommitから作る。botとセッションは、Releaseもタグも作らない。タグは`v<app/Cargo.tomlのバージョン>`にし、その前に`app/Cargo.toml`の`version`を上げるPRをマージしておく。
+
+Releaseを公開すると`.github/workflows/release.yml`が走り、muslで静的リンクした実行ファイルを作って、`wd-<バージョン>-x86_64-unknown-linux-musl.tar.gz`、`SHA256SUMS`、バージョンを埋め込んだ`install.sh`をそのReleaseにアップロードする。タグと`app/Cargo.toml`のバージョンが違えば止まる。
+
+wd#25でホストをRustのwdに切り替えるまでは、pre-releaseとして出す。pre-releaseでないReleaseは`latest`になり、shellのwdの`wd update`と、`ghcr.io/shokkunrf/devcontainer-features/wd`のfeatureの既定は、`latest`のReleaseからwdをインストールするためである。`install.sh`をReleaseにアップロードするのは、これらが`releases/latest/download/install.sh`と`releases/download/<タグ>/install.sh`から取得するためである。
+
 ## コマンド
 
 ```sh
@@ -43,7 +51,7 @@ CIのshellcheckとshfmtは、開発コンテナのDebian trixieのaptと同じ�
 
 - `app/` — 実行ファイルのcrate
 - `service/` — shellの発行サービス。wd#24で置き換えるまで使う
-- `install.sh` — Releaseからwdをインストールするスクリプト
+- `install.sh` — Releaseのtar.gzからwdをインストールするスクリプト。Releaseにアップロードするときにバージョンを埋め込む
 - `README.md`、`docs/` — shellのwdの説明。wd#30で書き直す
 - `.devcontainer/` — 開発コンテナ。Rustのtoolchainは`rust` featureで、musl-tools、shellcheck、shfmt、cargo-denyはDockerfileでインストールする
-- `.github/workflows/` — CIと、使うactionのcommitを固定する`actions.lock`
+- `.github/workflows/` — CIとリリースと、使うactionのcommitを固定する`actions.lock`
