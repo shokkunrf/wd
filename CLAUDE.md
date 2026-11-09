@@ -30,10 +30,14 @@ botが書いたworkflowはマージの前のブランチでも動くので、影
 ## コマンド
 
 ```sh
-prettier --write "**/*.md"                                # Markdownの整形
-gh extension install github/gh-actions-lock --pin v0.4.0  # gh-actions-lockのインストール
-gh actions-lock                                           # `actions.lock`の作り直し
+prettier --write "**/*.md"                                                      # Markdownの整形
+gh extension install github/gh-actions-lock --pin v0.4.0                        # gh-actions-lockのインストール
+gh actions-lock                                                                 # `actions.lock`の作り直し
+shellcheck install.sh service/install service/wd-token-issuer                   # shellのlint。CIと同じ
+shfmt -d -ln posix -i 2 -bn install.sh service/install service/wd-token-issuer  # shellの整形の検査。CIと同じ
 ```
+
+CIのshellcheckとshfmtは、開発コンテナのDebian trixieのaptと同じバージョン（0.10.0と3.8.0）にする。shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`も、同じくDebian trixieのaptでインストールする。
 
 ## ファイル構成
 
