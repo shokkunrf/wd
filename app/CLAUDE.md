@@ -5,23 +5,26 @@ wdの実行ファイルのcrate。cargoはこのディレクトリで実行す�
 ## コマンド
 
 ```sh
-cargo fmt --check                                       # 整形
-cargo clippy --locked --all-targets -- -D warnings      # lint
-cargo test --locked                                     # テスト
-cargo test --locked --target x86_64-unknown-linux-musl  # muslでのテスト
-cargo deny --locked check -D warnings                   # 依存の許可リスト、advisory、ライセンス、取得元
+cargo fmt --check                                                  # 整形
+cargo clippy --locked --all-targets -- -D warnings                 # lint
+cargo test --locked                                                # テスト
+cargo test --locked --target x86_64-unknown-linux-musl             # muslでのテスト
+cargo deny --locked check -D warnings                              # 依存の許可リスト、advisory、ライセンス、取得元
+cargo build --locked --release --target x86_64-unknown-linux-musl  # リリースと同じ静的リンクのビルド
 ```
 
-CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョンは、`Cargo.toml`の`version`である。
+CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョンは、`Cargo.toml`の`version`である。静的リンクになったかは、`readelf -lW target/x86_64-unknown-linux-musl/release/wd`にINTERPが無く、`readelf -dW`にNEEDEDが無いことで確かめる。
 
 ## バージョンを揃える場所
 
 上げるときは、同じ行の場所をすべて揃える。
 
-| もの       | 場所                                                                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Rust       | `rust-toolchain.toml`、`../.devcontainer/devcontainer.json`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`  |
-| cargo-deny | `../.devcontainer/Dockerfile`、`../.github/workflows/ci.yml`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile` |
+| もの               | 場所                                                                                                                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rust               | `rust-toolchain.toml`、`../.devcontainer/devcontainer.json`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`                                                    |
+| cargo-deny         | `../.devcontainer/Dockerfile`、`../.github/workflows/ci.yml`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`                                                   |
+| cargo-about        | `../.github/workflows/release.yml`                                                                                                                                                           |
+| musl（Rustに同梱） | `../.github/workflows/ci.yml`の`static`の`MUSL_VERSION`と、`../.github/workflows/release.yml`の`MUSL_VERSION`と`MUSL_SHA256`。Rustを上げて同梱のmuslのバージョンが変わると、`static`が止まる |
 
 ## 実装規約
 
@@ -49,6 +52,7 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 | 外部コマンドとファイルシステムのラッパー                          | `clippy.toml`の`disallowed-methods`。ラッパーの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと実際のgitを子プロセスとして実行するので、ファイル全体で許す                                                           |
 | 依存の許可リスト、build script、禁じるcrate、advisory、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`のバージョンの変更を伴い、人が承認する                                                                                                                                                                       |
 | コンパイラのバージョン                                            | `rust-toolchain.toml`                                                                                                                                                                                                                                    |
+| 静的リンク                                                        | `../.github/workflows/ci.yml`の`static`と`../.github/workflows/release.yml`の、readelfの検査                                                                                                                                                             |
 
 CIで検査しないものは、レビューで見る。
 
@@ -57,6 +61,7 @@ CIで検査しないものは、レビューで見る。
 - 各コマンドが動いてよい場所の検査
 - 検証済みの型
 - 自前のマクロ、async、参照を持つ構造体の禁止
+- `deny.toml`の`licenses.allow`と`about.toml`の`accepted`が揃っていること。ずれると、リリースで止まる
 
 標準エラーへの書き込みの失敗は報告する手段が無いので、`output::report`だけが文に`#[allow(clippy::let_underscore_must_use)]`を付けて捨てる。
 
@@ -66,5 +71,6 @@ CIで検査しないものは、レビューで見る。
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト
+- `about.toml`、`about.hbs` — リリースに同梱する依存の著作権表示の設定とテンプレート
 
 サブコマンドのモジュールと`issuer`は、それを実装するtaskが`src/`に足す。
