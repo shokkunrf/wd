@@ -4,29 +4,17 @@
 
 ## プロジェクト概要
 
-git worktree manager with devcontainer support。単一のPOSIX shスクリプト。
-
-## 開発ルール
-
-- **POSIX sh互換** — `#!/bin/sh`で動作すること。`local`, 配列, `[[ ]]`, `pipefail`等のbash拡張は禁止
-- **単一ファイル** — `wd`ファイルに全コマンドを実装。ビルドステップなし
-- **セクション順序** — utils → cmd_clone → cmd_list → cmd_add → cmd_remove → usage → main
-- **変数名** — グローバル変数汚染を避けるため`_`接頭辞を使用し、関数末尾で`unset`する
+wdはworkspaceとinstanceを扱うCLIで、Rustで書く。配るのは1つの実行ファイルで、ホストのコマンド、コンテナのコマンド、発行サービスをサブコマンドで切り替える。仕様の正本はshokkunrf/autopilot-sandboxの`docs/design/workspace-spec.md`と`docs/design/instance-spec.md`で、決定はそこの`docs/adr/`にある。
 
 ## コマンド
 
 ```sh
-shfmt -d -ln posix -i 2 -bn $(find . -name '*.sh')  # shfmtによるフォーマットチェック
-shellcheck -s sh $(find . -name '*.sh')  # ShellCheckによるlint
-sh tests/test_unit.sh && sh tests/test_integration.sh  # テスト実行
-sh src/wd.sh --version              # 動作確認
-dash src/wd.sh --version            # POSIX互換確認
-prettier --write "**/*.md"          # Markdownフォーマット
+prettier --write "**/*.md"  # Markdownの整形
 ```
 
 ## ファイル構成
 
-- `src/wd.sh` — 本体（インストール時に`wd`としてコピー）
-- `docs/design.md` — 技術設計書
-- `install.sh` — インストーラ
-- `.github/workflows/` — CI/CDワークフロー
+- `service/` — shellの発行サービス。wd#24で置き換えるまで使う
+- `install.sh` — Releaseからwdをインストールするスクリプト
+- `README.md`、`docs/` — shellのwdの説明。wd#30で書き直す
+- `.devcontainer/` — 開発コンテナ
