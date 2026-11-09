@@ -77,6 +77,7 @@ pem="$(get "$name" pem)"
 case "$pem" in "~/"*) pem="$HOME/${pem#"~/"}" ;; esac
 detail="app_id=${app_id:-none} installation_id=${inst:-none} pem=${pem:-none}"
 [ -z "$pem" ] || [ -r "$pem" ] || detail="$detail (unreadable)"
+# shellcheck disable=SC2015
 [ -n "$app_id" ] && [ -n "$inst" ] && [ -r "$pem" ] || err "incomplete registry entry: $name" "incomplete registry entry: $name $detail"
 
 # A 10-minute JWT centered on now tolerates up to 5 minutes of host clock skew (GitHub caps exp at 10 minutes ahead)
