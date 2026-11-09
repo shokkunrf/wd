@@ -17,4 +17,4 @@ prettier --write "**/*.md"  # Markdownの整形
 - `service/` — shellの発行サービス。wd#24で置き換えるまで使う
 - `install.sh` — Releaseからwdをインストールするスクリプト
 - `README.md`、`docs/` — shellのwdの説明。wd#30で書き直す
-- `.devcontainer/` — 開発コンテナ
+- `.devcontainer/` — 開発コンテナ。Rustのtoolchainは`rust` featureで、musl-tools、shellcheck、shfmt、cargo-denyはDockerfileでインストールする
