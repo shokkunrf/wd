@@ -19,11 +19,11 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 
 上げるときは、同じ行の場所をすべて揃える。
 
-| もの               | 場所                                                                                                                                                                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rust               | `rust-toolchain.toml`、`../.devcontainer/devcontainer.json`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`                                                    |
-| cargo-deny         | `../.devcontainer/Dockerfile`、`../.github/workflows/ci.yml`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`                                                   |
-| cargo-about        | `../.github/workflows/release.yml`                                                                                                                                                           |
+| もの | 場所 |
+| --- | --- |
+| Rust | `rust-toolchain.toml`、`../.devcontainer/devcontainer.json`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile` |
+| cargo-deny | `../.devcontainer/Dockerfile`、`../.github/workflows/ci.yml`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile` |
+| cargo-about | `../.github/workflows/release.yml` |
 | musl（Rustに同梱） | `../.github/workflows/ci.yml`の`static`の`MUSL_VERSION`と、`../.github/workflows/release.yml`の`MUSL_VERSION`と`MUSL_SHA256`。Rustを上げて同梱のmuslのバージョンが変わると、`static`が止まる |
 
 ## 実装規約
@@ -36,7 +36,7 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 - crateは1つ。コマンドはサブコマンドごとのモジュールに分け、ホストとコンテナのどちらで動いてよいかは各コマンドの定義に持たせ、dispatchで検査する。発行サービスは秘密鍵を扱うので`issuer`モジュールに分け、コマンドのモジュールとは互いに参照しない。共通の処理は`common`のような1つのモジュールにまとめず、`error`や`output`のように機能の名前のモジュールに置く
 - 外部コマンドの呼び出しとファイルシステムへの操作はそれぞれ1か所のラッパーに集め、それ以外での直接の呼び出しを`disallowed-methods`で禁じる。開くことに限らず、`metadata`、`read_dir`、`remove_dir_all`、`canonicalize`のようにsymlinkを辿る操作も対象にする
 - 発行サービスの秘密鍵を使う処理は、処理の時間が鍵に依らない実装で行い、タイミング攻撃について未修正のadvisoryがある実装は使わない。コンテナは要求を繰り返して応答の時間を測れるからである。暗号はringを使う。rsaはタイミング攻撃のadvisoryが未修正、aws-lc-rsは起動の最初に走るCの初期化を持つので使わない。JWTは自前で組む。HTTPSはureq v3とrustlsで、暗号の実装はring。ルート証明書はwebpki-rootsを埋め込み、その更新をリリースのきっかけにする
-- 他のcrateはlexopt、serde、serde_json、libc、base64。libcは`O_NOFOLLOW`のような定数だけに使う。時刻の書式は自前で書き、ログのcrateは使わない。YAMLはserde-saphyrでserdeの構造体に移す。serde-saphyrとその依存を許可リストに足すのはwd#18で、wd#18が依存の中身を確かめてから足す
+- 他のcrateはlexopt、serde、serde_json、libc、base64。libcは`O_NOFOLLOW`のような定数だけに使う。時刻の書式は自前で書き、ログのcrateは使わない。YAMLはsaphyr-parserのeventを読み、構造体へ手で移す。serde-saphyrは使わない。`deserialize`のfeatureが入れるencoding_rsが、x86_64でインラインアセンブリ（`asm!`）をコンパイルするからである。saphyr-parserの依存のthiserrorは入るが、wdのエラーには使わない
 - Cやアセンブリを含む依存はringだけ。build scriptを持つcrateは個別に許可する。ctor、linkme、inventoryを禁じる
 - 単体テストは同じファイルの`mod tests`。結合テストは`tests/`で実際のgitを使う。dockerが要るテストは`#[ignore]`にしてCIの別のジョブで走らせる。dev-dependenciesも許可リストの対象
 - muslのビルドはmusl-toolsと`--target x86_64-unknown-linux-musl`で行う
@@ -45,14 +45,14 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 
 ## CIで検査する規約
 
-| 規約                                                              | 場所                                                                                                                                                                                                                                                     |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| unsafeの禁止                                                      | `Cargo.toml`の`[lints.rust]`の`unsafe_code = "forbid"`                                                                                                                                                                                                   |
-| unwrapなどとprint系の禁止                                         | `Cargo.toml`の`[lints.clippy]`。`dbg!`と`.ok()`でResultを捨てることも禁じる。テストのunwrap、expect、`panic!`は`clippy.toml`の`allow-*-in-tests`で許す。それ以外をテストで使うときと、結合テストの`#[test]`の外の補助関数では、その場所に`allow`を付ける |
-| 外部コマンドとファイルシステムのラッパー                          | `clippy.toml`の`disallowed-methods`。ラッパーの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと実際のgitを子プロセスとして実行するので、ファイル全体で許す                                                           |
-| 依存の許可リスト、build script、禁じるcrate、advisory、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`のバージョンの変更を伴い、人が承認する                                                                                                                                                                       |
-| コンパイラのバージョン                                            | `rust-toolchain.toml`                                                                                                                                                                                                                                    |
-| 静的リンク                                                        | `../.github/workflows/ci.yml`の`static`と`../.github/workflows/release.yml`の、readelfの検査                                                                                                                                                             |
+| 規約 | 場所 |
+| --- | --- |
+| unsafeの禁止 | `Cargo.toml`の`[lints.rust]`の`unsafe_code = "forbid"` |
+| unwrapなどとprint系の禁止 | `Cargo.toml`の`[lints.clippy]`。`dbg!`と`.ok()`でResultを捨てることも禁じる。テストのunwrap、expect、`panic!`は`clippy.toml`の`allow-*-in-tests`で許す。それ以外をテストで使うときと、結合テストの`#[test]`の外の補助関数では、その場所に`allow`を付ける |
+| 外部コマンドとファイルシステムのラッパー | `clippy.toml`の`disallowed-methods`。ラッパーの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと実際のgitを子プロセスとして実行するので、ファイル全体で許す |
+| 依存の許可リスト、build script、禁じるcrate、advisory、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`のバージョンの変更を伴い、人が承認する |
+| コンパイラのバージョン | `rust-toolchain.toml` |
+| 静的リンク | `../.github/workflows/ci.yml`の`static`と`../.github/workflows/release.yml`の、readelfの検査 |
 
 CIで検査しないものは、レビューで見る。
 
@@ -70,6 +70,14 @@ CIで検査しないものは、レビューで見る。
 - `src/main.rs` — 引数の解析とコマンドのdispatch
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
+- `src/fs.rs` — ファイルを読むラッパー
+- `src/yaml.rs` — YAMLの共通の読み取り。1文書を、所有する木に読む
+- `src/name.rs` — 正準形の名前の検証済みの型
+- `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
+- `src/image.rs` — OCI参照の検証済みの型
+- `src/ledger.rs` — 名義台帳の読み込みと、選んだエントリの検査。ファイルは開かず、中身を受け取る
+- `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
+- `src/validate.rs` — `validate`サブコマンド
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト
 - `about.toml`、`about.hbs` — リリースに同梱する依存の著作権表示の設定とテンプレート
 
