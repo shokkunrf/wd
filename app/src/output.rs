@@ -9,9 +9,28 @@ pub fn line(text: &str) -> Result<(), Error> {
         .map_err(Error::Stdout)
 }
 
+/// Escapes `text` so that it fits in one line and shows control characters visibly.
+pub fn escape(text: &str) -> String {
+    text.escape_debug().to_string()
+}
+
+/// Writes one `wd: error: ` line per line of the message.
 pub fn report(err: &Error) {
     let mut stderr = io::stderr().lock();
-    // If stderr is not writable either, the exit code is the only report left.
-    #[allow(clippy::let_underscore_must_use)]
-    let _ = writeln!(stderr, "wd: error: {err}");
+    for line in err.to_string().lines() {
+        // If stderr is not writable either, the exit code is the only report left.
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = writeln!(stderr, "wd: error: {line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_keeps_one_line() {
+        assert_eq!(escape("a\nb\r\tc\"d\\"), "a\\nb\\r\\tc\\\"d\\\\");
+        assert_eq!(escape("日本語"), "日本語");
+    }
 }

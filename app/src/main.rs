@@ -1,5 +1,9 @@
 mod error;
+mod fs;
 mod output;
+mod validate;
+mod workspace;
+mod yaml;
 
 use std::ffi::OsString;
 use std::io::ErrorKind;
@@ -33,7 +37,10 @@ fn run(args: Vec<OsString>) -> Result<(), Error> {
             }
             output::line(VERSION)
         }
-        Some(Value(command)) => Err(Error::UnknownCommand(command)),
+        Some(Value(command)) => match command.to_str() {
+            Some("validate") => validate::run(&mut parser),
+            _ => Err(Error::UnknownCommand(command)),
+        },
         Some(arg) => Err(arg.unexpected().into()),
         None => Err(Error::NoCommand),
     }
