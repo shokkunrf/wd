@@ -1,4 +1,5 @@
-//! The canonical form of a name, shared by `name`, `control` and the `name` of a repo.
+//! The canonical form of a name, shared by `name`, `control`, the `name` of a repo and the keys of
+//! the identity ledger.
 
 use crate::output::quote;
 
@@ -22,7 +23,10 @@ impl Name {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "up reads the name (#17)"))]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "up and the ledger read the name (#17)")
+    )]
     pub fn as_str(&self) -> &str {
         &self.0
     }
