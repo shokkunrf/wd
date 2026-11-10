@@ -1,6 +1,9 @@
 mod error;
 mod fs;
+mod image;
+mod name;
 mod output;
+mod repo_url;
 mod validate;
 mod workspace;
 mod yaml;

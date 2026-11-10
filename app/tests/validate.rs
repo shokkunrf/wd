@@ -117,7 +117,7 @@ fn missing_keys_are_listed_with_unknown_keys_one_per_line() {
     write(
         &dir,
         "workspace.yaml",
-        b"name: a\nidentity: me\nrepos:\n  - name: x\n    url: \"git@github.com:o/r.git\"\n",
+        b"name: ab\nidentity: me\nrepos:\n  - name: xy\n    url: \"git@github.com:o/r.git\"\n",
     );
     assert_fails(
         &validate(&dir, &[]),
@@ -125,7 +125,7 @@ fn missing_keys_are_listed_with_unknown_keys_one_per_line() {
          wd: error: workspace.yaml: missing key \"control\"\n\
          wd: error: workspace.yaml: missing key \"agent\"\n\
          wd: error: workspace.yaml: missing key \"image\"\n\
-         wd: error: workspace.yaml: repos[x]: missing key \"default_ref\"\n",
+         wd: error: workspace.yaml: repos[xy]: missing key \"default_ref\"\n",
     );
 }
 
@@ -233,5 +233,124 @@ fn extra_arguments_and_options_fail() {
     assert_fails(
         &validate(&dir, &["--frobnicate"]),
         "wd: error: invalid option '--frobnicate'\n",
+    );
+}
+
+/// The example of the spec with `from` replaced by `to`.
+fn changed(from: &str, to: &str) -> String {
+    assert!(SPEC_EXAMPLE.contains(from));
+    SPEC_EXAMPLE.replacen(from, to, 1)
+}
+
+#[allow(clippy::unwrap_used)]
+fn fails_with(test: &str, content: &str, expected: &[&str]) {
+    let dir = dir(test);
+    write(&dir, "workspace.yaml", content.as_bytes());
+    let out = validate(&dir, &["workspace.yaml"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    let lines: Vec<String> = stderr(&out).lines().map(str::to_owned).collect();
+    let expected: Vec<String> = expected
+        .iter()
+        .map(|line| format!("wd: error: workspace.yaml: {line}"))
+        .collect();
+    assert_eq!(lines, expected);
+}
+
+#[test]
+fn a_newline_in_image_or_url_fails() {
+    fails_with(
+        "newline_image",
+        &changed(
+            "image: ghcr.io/shokkunrf/devcontainer-images/base:4.1.0",
+            "image: \"ghcr.io/o/img:1\\nx\"",
+        ),
+        &[
+            "invalid value of \"image\": \"ghcr.io/o/img:1\\nx\" is not an OCI reference; \"1\\nx\" is not a tag; a tag has 1 to 128 letters, digits, \"_\", \".\" and \"-\" and does not start with \".\" or \"-\"",
+        ],
+    );
+    fails_with(
+        "newline_url",
+        &changed(
+            "url: git@github.com:shokkunrf/wd.git",
+            "url: \"git@github.com:shokkunrf/wd.git\\n\"",
+        ),
+        &[
+            "repos[wd]: invalid value of \"url\": \"git@github.com:shokkunrf/wd.git\\n\" has the invalid repo \"wd.git\\n\"; a repo starts with a letter, digit or underscore and has only letters, digits, \".\", \"_\" and \"-\"",
+        ],
+    );
+}
+
+#[test]
+fn a_dangling_control_and_duplicates_are_listed_together() {
+    let content = changed("control: sandbox", "control: nowhere")
+        .replace("name: wd", "name: sandbox")
+        .replace(
+            "git@github.com:shokkunrf/wd.git",
+            "https://github.com/ShokkunRF/Autopilot-Sandbox",
+        );
+    fails_with(
+        "dangling_and_duplicates",
+        &content,
+        &[
+            "`control` is \"nowhere\", but no element of `repos` has that `name`; the names present are \"sandbox\", \"sandbox\"",
+            "`name` \"sandbox\" is used by more than one element of `repos`",
+            "the identifier \"github.com/shokkunrf/autopilot-sandbox\" is derived from more than one `url`: \"git@github.com:shokkunrf/autopilot-sandbox.git\", \"https://github.com/ShokkunRF/Autopilot-Sandbox\"",
+        ],
+    );
+}
+
+#[test]
+fn bad_values_and_an_empty_repos_are_listed() {
+    let content = "name: Autopilot\ncontrol: sandbox\nagent: gemini\nimage: base\nrepos: []\n";
+    fails_with(
+        "bad_values",
+        content,
+        &[
+            "invalid value of \"name\": \"Autopilot\" is not a canonical name; use 2 to 30 lowercase letters, digits and hyphens, starting with a letter, with no trailing or doubled hyphen",
+            "invalid value of \"agent\": \"gemini\" is not an agent; the allowed words are \"claude\"",
+            "invalid value of \"image\": \"base\" is not an OCI reference; a tag or a digest is required",
+            "`control` is \"sandbox\", but no element of `repos` has that `name`; the names present are none",
+            "`repos` is empty; it needs at least one element",
+        ],
+    );
+}
+
+#[test]
+fn a_bad_default_ref_and_a_foreign_host_are_named() {
+    let content = changed("default_ref: branch:develop", "default_ref: tag:v1")
+        .replace("git@github.com:shokkunrf/wd.git", "https://gitlab.com/o/r");
+    fails_with(
+        "default_ref_and_host",
+        &content,
+        &[
+            "repos[sandbox]: invalid value of \"default_ref\": \"tag:v1\" must be \"branch:<branch name>\"; \"tag:\", \"pr:\" and \"sha:\" are not accepted",
+            "repos[wd]: invalid value of \"url\": \"https://gitlab.com/o/r\" is on the host \"gitlab.com\", but only github.com is accepted",
+        ],
+    );
+}
+
+#[test]
+fn a_newline_from_a_block_scalar_in_image_or_url_fails() {
+    // A literal block scalar keeps the final newline, so the value ends with one.
+    fails_with(
+        "block_scalar_image",
+        &changed(
+            "image: ghcr.io/shokkunrf/devcontainer-images/base:4.1.0",
+            "image: |\n  ghcr.io/o/img:1",
+        ),
+        &[
+            "invalid value of \"image\": \"ghcr.io/o/img:1\\n\" is not an OCI reference; \"1\\n\" is not a tag; a tag has 1 to 128 letters, digits, \"_\", \".\" and \"-\" and does not start with \".\" or \"-\"",
+        ],
+    );
+    fails_with(
+        "block_scalar_url",
+        &changed(
+            "url: git@github.com:shokkunrf/wd.git",
+            "url: |\n      git@github.com:shokkunrf/wd.git",
+        ),
+        &[
+            "repos[wd]: invalid value of \"url\": \"git@github.com:shokkunrf/wd.git\\n\" has the invalid repo \"wd.git\\n\"; a repo starts with a letter, digit or underscore and has only letters, digits, \".\", \"_\" and \"-\"",
+        ],
     );
 }

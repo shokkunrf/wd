@@ -14,6 +14,11 @@ pub fn escape(text: &str) -> String {
     text.escape_debug().to_string()
 }
 
+/// Escapes `text` and puts it in double quotes.
+pub fn quote(text: &str) -> String {
+    format!("\"{}\"", escape(text))
+}
+
 /// Writes one `wd: error: ` line per line of the message.
 pub fn report(err: &Error) {
     let mut stderr = io::stderr().lock();
@@ -32,5 +37,6 @@ mod tests {
     fn escape_keeps_one_line() {
         assert_eq!(escape("a\nb\r\tc\"d\\"), "a\\nb\\r\\tc\\\"d\\\\");
         assert_eq!(escape("日本語"), "日本語");
+        assert_eq!(quote("a\nb"), "\"a\\nb\"");
     }
 }
