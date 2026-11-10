@@ -75,6 +75,7 @@ CIで検査しないものは、レビューで見る。
 - `src/name.rs` — 正準形の名前の検証済みの型
 - `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
 - `src/image.rs` — OCI参照の検証済みの型
+- `src/ledger.rs` — 名義台帳の読み込みと、選んだエントリの検査。ファイルは開かず、中身を受け取る
 - `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
 - `src/validate.rs` — `validate`サブコマンド
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト

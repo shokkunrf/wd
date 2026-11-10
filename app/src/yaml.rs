@@ -113,6 +113,32 @@ impl Scalar {
     }
 }
 
+impl Scalar {
+    /// The reason is the rest of a sentence that starts with "must be an integer, but". An
+    /// integer is read the same whether it is quoted or not.
+    fn integer(&self) -> Result<i64, String> {
+        let readable = match self.ty {
+            ScalarType::Int => true,
+            ScalarType::Str => !self.plain && !self.tagged && is_int(&self.value),
+            _ => false,
+        };
+        if !readable {
+            if self.tagged {
+                return Err(format!("its tag makes it {}", self.ty.name()));
+            }
+            if self.ty == ScalarType::Null && self.value.is_empty() {
+                return Err("it has no value".to_owned());
+            }
+            return Err(format!(
+                "the value \"{}\" is not an integer",
+                escape(&self.value)
+            ));
+        }
+        parse_int(&self.value)
+            .ok_or_else(|| format!("the value \"{}\" is too large", escape(&self.value)))
+    }
+}
+
 #[derive(Debug)]
 pub struct Entry {
     pub key: String,
@@ -153,6 +179,44 @@ impl Node {
         Err(Error::new(
             self.pos,
             format!("{label} must be a string, but {reason}"),
+        ))
+    }
+
+    /// An integer, written with or without quotes, or tagged `!!int`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the ledger is read by up (#17)")
+    )]
+    pub fn as_int(&self, label: &str) -> Result<i64, Error> {
+        let reason = match &self.kind {
+            Kind::Scalar(scalar) => match scalar.integer() {
+                Ok(value) => return Ok(value),
+                Err(reason) => reason,
+            },
+            _ => format!("it is {}", self.describe()),
+        };
+        Err(Error::new(
+            self.pos,
+            format!("{label} must be an integer, but {reason}"),
+        ))
+    }
+
+    /// Checks only that the value is a string or an integer.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the ledger is read by up (#17)")
+    )]
+    pub fn check_string_or_int(&self, label: &str) -> Result<(), Error> {
+        let reason = match &self.kind {
+            Kind::Scalar(scalar) => match (scalar.string(), scalar.integer()) {
+                (Err(reason), Err(_)) => reason,
+                _ => return Ok(()),
+            },
+            _ => format!("it is {}", self.describe()),
+        };
+        Err(Error::new(
+            self.pos,
+            format!("{label} must be a string or an integer, but {reason}"),
         ))
     }
 
@@ -488,6 +552,21 @@ fn is_int(value: &str) -> bool {
     !rest.is_empty() && all_digits(rest)
 }
 
+/// Reads an integer that `is_int` accepted. `None` when it does not fit.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the ledger is read by up (#17)")
+)]
+fn parse_int(value: &str) -> Option<i64> {
+    if let Some(rest) = value.strip_prefix("0x") {
+        i64::from_str_radix(rest, 16).ok()
+    } else if let Some(rest) = value.strip_prefix("0o") {
+        i64::from_str_radix(rest, 8).ok()
+    } else {
+        value.parse().ok()
+    }
+}
+
 fn is_float(value: &str) -> bool {
     if matches!(value, ".nan" | ".NaN" | ".NAN") {
         return true;
@@ -781,5 +860,95 @@ mod tests {
             root.as_map("the document").unwrap_err().to_string(),
             "line 1, column 1: the document must be a mapping, but it is a sequence"
         );
+    }
+
+    fn int_of(text: &str) -> Result<i64, String> {
+        let root = parse(text.as_bytes()).unwrap();
+        root.as_map("the document").unwrap()[0]
+            .value
+            .as_int("`a`")
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn integers_are_read_the_same_with_or_without_quotes() {
+        for (text, value) in [
+            ("a: 5\n", 5),
+            ("a: '5'\n", 5),
+            ("a: \"5\"\n", 5),
+            ("a: +5\n", 5),
+            ("a: -5\n", -5),
+            ("a: 007\n", 7),
+            ("a: 0x1F\n", 31),
+            ("a: \"0x1F\"\n", 31),
+            ("a: 0o17\n", 15),
+            ("a: !!int 5\n", 5),
+            ("a: !!int \"5\"\n", 5),
+            ("a: 9223372036854775807\n", i64::MAX),
+        ] {
+            assert_eq!(int_of(text), Ok(value), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn what_is_not_an_integer_is_named() {
+        assert_eq!(
+            int_of("a: x\n"),
+            Err(
+                "line 1, column 4: `a` must be an integer, but the value \"x\" is not an integer"
+                    .to_owned()
+            )
+        );
+        for (text, why) in [
+            ("a: '5.0'\n", "is not an integer"),
+            ("a: 5.0\n", "is not an integer"),
+            ("a: true\n", "is not an integer"),
+            ("a: |\n  5\n", "is not an integer"),
+            ("a:\n", "it has no value"),
+            ("a: !!str 5\n", "its tag makes it a string"),
+            ("a: [5]\n", "it is a sequence"),
+            ("a: {b: 5}\n", "it is a mapping"),
+            ("a: 9223372036854775808\n", "is too large"),
+            ("a: 0xFFFFFFFFFFFFFFFF\n", "is too large"),
+        ] {
+            let err = int_of(text).unwrap_err();
+            assert!(err.contains(why), "{text:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_string_or_an_integer_is_checked_without_the_rest() {
+        for ok in [
+            "a: x\n",
+            "a: 'x'\n",
+            "a: 5\n",
+            "a: 010\n",
+            "a: '5'\n",
+            "a: !!int 5\n",
+        ] {
+            let root = parse(ok.as_bytes()).unwrap();
+            assert!(
+                root.as_map("m").unwrap()[0]
+                    .value
+                    .check_string_or_int("`a`")
+                    .is_ok(),
+                "{ok:?}"
+            );
+        }
+        for (bad, why) in [
+            ("a: true\n", "the plain value \"true\" is read as a boolean"),
+            ("a: 1.5\n", "is read as a float"),
+            ("a:\n", "it has no value"),
+            ("a: [x]\n", "it is a sequence"),
+        ] {
+            let root = parse(bad.as_bytes()).unwrap();
+            let err = root.as_map("m").unwrap()[0]
+                .value
+                .check_string_or_int("`a`")
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("must be a string or an integer, but"), "{err}");
+            assert!(err.contains(why), "{bad:?}: {err}");
+        }
     }
 }
