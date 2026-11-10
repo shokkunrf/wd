@@ -36,7 +36,7 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 - crateは1つ。コマンドはサブコマンドごとのモジュールに分け、ホストとコンテナのどちらで動いてよいかは各コマンドの定義に持たせ、dispatchで検査する。発行サービスは秘密鍵を扱うので`issuer`モジュールに分け、コマンドのモジュールとは互いに参照しない。共通の処理は`common`のような1つのモジュールにまとめず、`error`や`output`のように機能の名前のモジュールに置く
 - 外部コマンドの呼び出しとファイルシステムへの操作はそれぞれ1か所のラッパーに集め、それ以外での直接の呼び出しを`disallowed-methods`で禁じる。開くことに限らず、`metadata`、`read_dir`、`remove_dir_all`、`canonicalize`のようにsymlinkを辿る操作も対象にする
 - 発行サービスの秘密鍵を使う処理は、処理の時間が鍵に依らない実装で行い、タイミング攻撃について未修正のadvisoryがある実装は使わない。コンテナは要求を繰り返して応答の時間を測れるからである。暗号はringを使う。rsaはタイミング攻撃のadvisoryが未修正、aws-lc-rsは起動の最初に走るCの初期化を持つので使わない。JWTは自前で組む。HTTPSはureq v3とrustlsで、暗号の実装はring。ルート証明書はwebpki-rootsを埋め込み、その更新をリリースのきっかけにする
-- 他のcrateはlexopt、serde、serde_json、libc、base64。libcは`O_NOFOLLOW`のような定数だけに使う。時刻の書式は自前で書き、ログのcrateは使わない。YAMLはserde-saphyrでserdeの構造体に移す。serde-saphyrとその依存を許可リストに足すのはwd#18で、wd#18が依存の中身を確かめてから足す
+- 他のcrateはlexopt、serde、serde_json、libc、base64。libcは`O_NOFOLLOW`のような定数だけに使う。時刻の書式は自前で書き、ログのcrateは使わない。YAMLはsaphyr-parserのeventを読み、構造体へ手で移す。serde-saphyrは使わない。`deserialize`のfeatureが入れるencoding_rsが、x86_64でインラインアセンブリ（`asm!`）をコンパイルするからである。saphyr-parserの依存のthiserrorは入るが、wdのエラーには使わない
 - Cやアセンブリを含む依存はringだけ。build scriptを持つcrateは個別に許可する。ctor、linkme、inventoryを禁じる
 - 単体テストは同じファイルの`mod tests`。結合テストは`tests/`で実際のgitを使う。dockerが要るテストは`#[ignore]`にしてCIの別のジョブで走らせる。dev-dependenciesも許可リストの対象
 - muslのビルドはmusl-toolsと`--target x86_64-unknown-linux-musl`で行う
