@@ -72,7 +72,10 @@ CIで検査しないものは、レビューで見る。
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
 - `src/fs.rs` — ファイルを読むラッパー
 - `src/yaml.rs` — YAMLの共通の読み取り。1文書を、所有する木に読む
-- `src/workspace.rs` — workspace.yamlのキー表の検査
+- `src/name.rs` — 正準形の名前の検証済みの型
+- `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
+- `src/image.rs` — OCI参照の検証済みの型
+- `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
 - `src/validate.rs` — `validate`サブコマンド
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト
 - `about.toml`、`about.hbs` — リリースに同梱する依存の著作権表示の設定とテンプレート

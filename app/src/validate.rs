@@ -43,7 +43,7 @@ pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {
         Err(error) => return Err(Error::Yaml { path, error }),
     };
     match workspace::check(&root) {
-        Ok(()) => Ok(()),
+        Ok(_) => Ok(()),
         Err(Failure::Yaml(error)) => Err(Error::Yaml { path, error }),
         Err(Failure::Problems(problems)) => Err(Error::Invalid { path, problems }),
     }

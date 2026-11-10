@@ -22,7 +22,7 @@ pub enum Error {
         path: PathBuf,
         error: yaml::Error,
     },
-    /// A file is valid YAML but has keys wd does not accept. One line per problem.
+    /// A file is valid YAML but has keys or values wd does not accept. One line per problem.
     Invalid {
         path: PathBuf,
         problems: Vec<yaml::Error>,
