@@ -6,11 +6,11 @@
 
 ### 1.1 解決する課題
 
-| 課題                     | 現状                                               | wd による解決                                     |
-| ------------------------ | -------------------------------------------------- | ------------------------------------------------- |
-| リポジトリの構造化管理   | ghq を使うが worktree 非対応                       | ghq ライクな配置 + bare clone を統合              |
-| ブランチ切り替えのコスト | `git switch` で作業中断・stash が必要              | worktree で並行作業、各ブランチが独立ディレクトリ |
-| devcontainer との統合    | worktree 運用時に `.devcontainer` を手動で symlink | `wd clone` が自動で symlink を作成                |
+| 課題 | 現状 | wd による解決 |
+| --- | --- | --- |
+| リポジトリの構造化管理 | ghq を使うが worktree 非対応 | ghq ライクな配置 + bare clone を統合 |
+| ブランチ切り替えのコスト | `git switch` で作業中断・stash が必要 | worktree で並行作業、各ブランチが独立ディレクトリ |
+| devcontainer との統合 | worktree 運用時に `.devcontainer` を手動で symlink | `wd clone` が自動で symlink を作成 |
 
 ### 1.2 設計原則
 
@@ -42,11 +42,11 @@ $WD_ROOT/                                  # デフォルト: ~/Repositories
 
 ### 2.2 ワークツリーの命名規則
 
-| 種別           | ディレクトリ名 | 作成元        |
-| -------------- | -------------- | ------------- |
-| デフォルト     | `<branch>`     | `wd clone`    |
-| ブランチ作業用 | `wt-<branch>`  | `wd add`      |
-| PR レビュー用  | `pr-<number>`  | `wd add --pr` |
+| 種別 | ディレクトリ名 | 作成元 |
+| --- | --- | --- |
+| デフォルト | `<branch>` | `wd clone` |
+| ブランチ作業用 | `wt-<branch>` | `wd add` |
+| PR レビュー用 | `pr-<number>` | `wd add --pr` |
 
 デフォルトワークツリーは `.devcontainer` symlink の参照先として保護され、`wd remove` で削除できない。
 
@@ -113,10 +113,10 @@ github.com/owner2/repo2/main
 
 **引数の対応** (`git worktree add` に準拠、`<path>` は `wt-<branch>` を自動導出):
 
-| `git worktree add`                              | `wd add`                    |
-| ----------------------------------------------- | --------------------------- |
-| `git worktree add <path> <commit-ish>`          | `wd add <branch>`           |
-| `git worktree add -b <new> <path>`              | `wd add -b <branch>`        |
+| `git worktree add` | `wd add` |
+| --- | --- |
+| `git worktree add <path> <commit-ish>` | `wd add <branch>` |
+| `git worktree add -b <new> <path>` | `wd add -b <branch>` |
 | `git worktree add -b <new> <path> <commit-ish>` | `wd add -b <branch> <base>` |
 
 - `<base>` は git にそのまま渡る (ブランチ・リモート追跡ブランチ・タグ・コミットハッシュ)。省略時は bare リポジトリの HEAD (= 既定ブランチ) から分岐する
@@ -203,8 +203,8 @@ github.com/owner2/repo2/main
 
 ## 4. 設定
 
-| 変数      | デフォルト       | 説明                                 |
-| --------- | ---------------- | ------------------------------------ |
+| 変数 | デフォルト | 説明 |
+| --- | --- | --- |
 | `WD_ROOT` | `~/Repositories` | プロジェクト配置のルートディレクトリ |
 
 ## 5. アーキテクチャ
@@ -247,22 +247,22 @@ WD_VERSION="dev"
 
 ### 5.2 共通関数
 
-| 関数                                  | 説明                                                                  |
-| ------------------------------------- | --------------------------------------------------------------------- |
-| `die <message>`                       | エラーメッセージを stderr に出力して exit 1                           |
-| `parse_repo_url <url>`                | SSH URL を `host/owner/repo` 形式に正規化                             |
-| `find_project_root`                   | カレントディレクトリから親方向へ `.bare/` を探索                      |
-| `list_worktrees <project_root>`       | プロジェクト内のワークツリー名一覧を出力 (bare エントリ除外)          |
+| 関数 | 説明 |
+| --- | --- |
+| `die <message>` | エラーメッセージを stderr に出力して exit 1 |
+| `parse_repo_url <url>` | SSH URL を `host/owner/repo` 形式に正規化 |
+| `find_project_root` | カレントディレクトリから親方向へ `.bare/` を探索 |
+| `list_worktrees <project_root>` | プロジェクト内のワークツリー名一覧を出力 (bare エントリ除外) |
 | `get_default_worktree <project_root>` | デフォルトワークツリー名を返す (.devcontainer 参照先 or wt-/pr- 以外) |
-| `write_relative_paths <root> <name>`  | ワークツリーの `.git` と `gitdir` を相対パスで再書き込み              |
+| `write_relative_paths <root> <name>` | ワークツリーの `.git` と `gitdir` を相対パスで再書き込み |
 
 ## 6. 制約と互換性
 
-| 項目       | 方針                                                                 |
-| ---------- | -------------------------------------------------------------------- |
-| シェル     | POSIX sh 互換 (`#!/bin/sh`)                                          |
-| 禁止機能   | `local`, 配列, `[[ ]]`, `=~`, `pipefail`, プロセス置換等の bash 拡張 |
-| Git        | >= 2.17.0（`git worktree add` の基本機能に依存）                     |
-| OS         | Linux, macOS                                                         |
-| Clone URL  | SSH (`git@host:owner/repo`) のみ                                     |
-| 外部ツール | なし。git と POSIX sh のみ                                           |
+| 項目 | 方針 |
+| --- | --- |
+| シェル | POSIX sh 互換 (`#!/bin/sh`) |
+| 禁止機能 | `local`, 配列, `[[ ]]`, `=~`, `pipefail`, プロセス置換等の bash 拡張 |
+| Git | >= 2.17.0（`git worktree add` の基本機能に依存） |
+| OS | Linux, macOS |
+| Clone URL | SSH (`git@host:owner/repo`) のみ |
+| 外部ツール | なし。git と POSIX sh のみ |

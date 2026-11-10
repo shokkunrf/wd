@@ -10,7 +10,7 @@ ignore = []
 
 [licenses]
 # Keep in sync with accepted in about.toml.
-allow = ["MIT"]
+allow = ["MIT", "Unicode-3.0"]
 confidence-threshold = 0.93
 
 [bans]
@@ -20,6 +20,14 @@ allow-wildcard-paths = false
 allow-workspace = true
 allow = [
   { crate = "lexopt@=0.3.2", reason = "argument parsing" },
+  { crate = "saphyr-parser@=0.3.3", reason = "YAML events, which are mapped to structs by hand" },
+  { crate = "arraydeque@=0.5.1", reason = "dependency of saphyr-parser" },
+  { crate = "thiserror@=2.0.21", reason = "dependency of saphyr-parser, not used for wd errors" },
+  { crate = "thiserror-impl@=2.0.21", reason = "dependency of thiserror, a proc macro" },
+  { crate = "proc-macro2@=1.0.107", reason = "dependency of thiserror-impl" },
+  { crate = "quote@=1.0.47", reason = "dependency of thiserror-impl" },
+  { crate = "syn@=3.0.10", reason = "dependency of thiserror-impl" },
+  { crate = "unicode-ident@=1.0.27", reason = "dependency of proc-macro2" },
 ]
 deny = [
   { crate = "ctor", reason = "runs code before main" },
@@ -31,7 +39,11 @@ deny = [
 include-dependencies = true
 executables = "deny"
 interpreted = "deny"
-allow-build-scripts = []
+allow-build-scripts = [
+  { crate = "proc-macro2@=1.0.107", reason = "dependency of thiserror-impl, probes the compiler version" },
+  { crate = "quote@=1.0.47", reason = "dependency of thiserror-impl, probes the compiler version" },
+  { crate = "thiserror@=2.0.21", reason = "dependency of saphyr-parser, probes the compiler version" },
+]
 
 [sources]
 unknown-registry = "deny"
