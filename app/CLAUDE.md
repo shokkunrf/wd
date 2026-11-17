@@ -19,11 +19,11 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 
 上げるときは、同じ行の場所をすべて揃える。
 
-| もの               | 場所                                                                                                                                                                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rust               | `rust-toolchain.toml`、`../.devcontainer/devcontainer.json`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`                                                    |
-| cargo-deny         | `../.devcontainer/Dockerfile`、`../.github/workflows/ci.yml`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile`                                                   |
-| cargo-about        | `../.github/workflows/release.yml`                                                                                                                                                           |
+| もの | 場所 |
+| --- | --- |
+| Rust | `rust-toolchain.toml`、`../.devcontainer/devcontainer.json`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile` |
+| cargo-deny | `../.devcontainer/Dockerfile`、`../.github/workflows/ci.yml`、shokkunrf/autopilot-sandboxの`workspaces/autopilot/.devcontainer/Dockerfile` |
+| cargo-about | `../.github/workflows/release.yml` |
 | musl（Rustに同梱） | `../.github/workflows/ci.yml`の`static`の`MUSL_VERSION`と、`../.github/workflows/release.yml`の`MUSL_VERSION`と`MUSL_SHA256`。Rustを上げて同梱のmuslのバージョンが変わると、`static`が止まる |
 
 ## 実装規約
@@ -45,14 +45,14 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 
 ## CIで検査する規約
 
-| 規約                                                              | 場所                                                                                                                                                                                                                                                     |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| unsafeの禁止                                                      | `Cargo.toml`の`[lints.rust]`の`unsafe_code = "forbid"`                                                                                                                                                                                                   |
-| unwrapなどとprint系の禁止                                         | `Cargo.toml`の`[lints.clippy]`。`dbg!`と`.ok()`でResultを捨てることも禁じる。テストのunwrap、expect、`panic!`は`clippy.toml`の`allow-*-in-tests`で許す。それ以外をテストで使うときと、結合テストの`#[test]`の外の補助関数では、その場所に`allow`を付ける |
-| 外部コマンドとファイルシステムのラッパー                          | `clippy.toml`の`disallowed-methods`。ラッパーの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと実際のgitを子プロセスとして実行するので、ファイル全体で許す                                                           |
-| 依存の許可リスト、build script、禁じるcrate、advisory、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`のバージョンの変更を伴い、人が承認する                                                                                                                                                                       |
-| コンパイラのバージョン                                            | `rust-toolchain.toml`                                                                                                                                                                                                                                    |
-| 静的リンク                                                        | `../.github/workflows/ci.yml`の`static`と`../.github/workflows/release.yml`の、readelfの検査                                                                                                                                                             |
+| 規約 | 場所 |
+| --- | --- |
+| unsafeの禁止 | `Cargo.toml`の`[lints.rust]`の`unsafe_code = "forbid"` |
+| unwrapなどとprint系の禁止 | `Cargo.toml`の`[lints.clippy]`。`dbg!`と`.ok()`でResultを捨てることも禁じる。テストのunwrap、expect、`panic!`は`clippy.toml`の`allow-*-in-tests`で許す。それ以外をテストで使うときと、結合テストの`#[test]`の外の補助関数では、その場所に`allow`を付ける |
+| 外部コマンドとファイルシステムのラッパー | `clippy.toml`の`disallowed-methods`。ラッパーの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと実際のgitを子プロセスとして実行するので、ファイル全体で許す |
+| 依存の許可リスト、build script、禁じるcrate、advisory、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`のバージョンの変更を伴い、人が承認する |
+| コンパイラのバージョン | `rust-toolchain.toml` |
+| 静的リンク | `../.github/workflows/ci.yml`の`static`と`../.github/workflows/release.yml`の、readelfの検査 |
 
 CIで検査しないものは、レビューで見る。
 
