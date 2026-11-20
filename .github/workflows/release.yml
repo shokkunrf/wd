@@ -4,26 +4,90 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: write
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: app
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      TARGET: x86_64-unknown-linux-musl
+      MUSL_VERSION: 1.2.5
+      MUSL_SHA256: a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run ShellCheck
-        run: shellcheck -s sh $(find . -name '*.sh')
-
-      - name: Prepare release assets
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install musl-tools
         run: |
-          cp src/wd.sh wd
-          sed -i 's/WD_VERSION="dev"/WD_VERSION="'"${{ github.ref_name }}"'"/' wd
-          sed -i 's/VERSION="latest"/VERSION="'"${{ github.ref_name }}"'"/' install.sh
-          sha256sum wd > wd.sha256
-
-      - name: Upload release assets
-        run: gh release upload "${{ github.ref_name }}" wd install.sh wd.sha256
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - run: rustup toolchain install
+      - name: Check that the tag matches the version in Cargo.toml
+        run: |
+          version="$(cargo pkgid)"
+          version="${version##*[#@]}"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::the tag $TAG does not match the version $version in app/Cargo.toml"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Install cargo-about
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_ABOUT_VERSION: 0.9.3
+          CARGO_ABOUT_SHA256: 3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+        run: |
+          name="cargo-about-${CARGO_ABOUT_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/$name.tar.gz" "https://github.com/EmbarkStudios/cargo-about/releases/download/${CARGO_ABOUT_VERSION}/$name.tar.gz"
+          echo "${CARGO_ABOUT_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          install -D -m 0755 "$RUNNER_TEMP/$name/cargo-about" "$RUNNER_TEMP/bin/cargo-about"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: cargo build --locked --release --target "$TARGET"
+      - name: Check that the binary is statically linked
+        run: |
+          headers="$(readelf -lW "target/$TARGET/release/wd")"
+          dynamic="$(readelf -dW "target/$TARGET/release/wd")"
+          case "$headers $dynamic" in
+            *INTERP* | *NEEDED*)
+              echo "::error::the binary is not statically linked"
+              exit 1
+              ;;
+          esac
+      - name: Download musl's COPYRIGHT
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/musl.tar.gz" "https://musl.libc.org/releases/musl-$MUSL_VERSION.tar.gz"
+          echo "$MUSL_SHA256  $RUNNER_TEMP/musl.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/musl.tar.gz" -C "$RUNNER_TEMP" "musl-$MUSL_VERSION/COPYRIGHT"
+      - name: Package the binary with the notices
+        run: |
+          name="wd-$VERSION-$TARGET"
+          dir="$RUNNER_TEMP/dist/$name"
+          mkdir -p "$dir"
+          install -m 0755 "target/$TARGET/release/wd" "$dir/wd"
+          cp ../LICENSE "$dir/LICENSE"
+          cargo about generate --locked --fail about.hbs -o "$dir/THIRD-PARTY-NOTICES.txt"
+          printf '\n%s\nmusl %s (MIT)\n%s\n\n' '================================================================================' "$MUSL_VERSION" '--------------------------------------------------------------------------------' >>"$dir/THIRD-PARTY-NOTICES.txt"
+          cat "$RUNNER_TEMP/musl-$MUSL_VERSION/COPYRIGHT" >>"$dir/THIRD-PARTY-NOTICES.txt"
+          cp "$(rustc --print sysroot)/share/doc/rust/COPYRIGHT-library.html" "$dir/COPYRIGHT-rust-library.html"
+          cd "$RUNNER_TEMP/dist"
+          tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" >SHA256SUMS
+          sed "s/^VERSION=\"\"\$/VERSION=\"$VERSION\"/" "$GITHUB_WORKSPACE/install.sh" >install.sh
+          grep -qx "VERSION=\"$VERSION\"" install.sh
+      - name: Upload the files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd "$RUNNER_TEMP/dist"
+          gh release upload "$TAG" "wd-$VERSION-$TARGET.tar.gz" SHA256SUMS install.sh

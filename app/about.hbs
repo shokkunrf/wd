@@ -1,0 +1,13 @@
+Copyright notices and licenses of the crates and of musl, which are statically linked into wd.
+musl's notice is at the end. The Rust standard library's notices are in COPYRIGHT-rust-library.html.
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{{id}}})
+{{#each used_by}}
+- {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} {{{crate.repository}}}{{/if}}
+{{/each}}
+--------------------------------------------------------------------------------
+
+{{{text}}}
+{{/each}}

@@ -1,34 +1,132 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [develop]
-    paths: ["**/*.sh"]
-  pull_request:
-    paths: ["**/*.sh"]
-  workflow_dispatch:
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+defaults:
+  run:
+    working-directory: app
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Install shfmt
-        run: sudo apt-get update && sudo apt-get install -y shfmt
-      - name: Run shfmt
-        run: shfmt -d -ln posix -i 2 -bn $(find . -name '*.sh')
-      - name: Run ShellCheck
-        run: shellcheck -s sh $(find . -name '*.sh')
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
 
-  test:
-    runs-on: ubuntu-latest
+  deny:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - name: Configure git
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Install cargo-deny
+        env:
+          CARGO_DENY_VERSION: 0.20.2
+          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
         run: |
-          git config --global user.name "Test"
-          git config --global user.email "test@test.com"
-      - name: Run unit tests
-        run: sh tests/test_unit.sh
-      - name: Run integration tests
-        run: sh tests/test_integration.sh
+          name="cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/$name.tar.gz" "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/$name.tar.gz"
+          echo "${CARGO_DENY_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          install -D -m 0755 "$RUNNER_TEMP/$name/cargo-deny" "$RUNNER_TEMP/bin/cargo-deny"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: cargo deny --locked check -D warnings
+
+  shell:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install shellcheck and shfmt
+        env:
+          SHELLCHECK_VERSION: 0.10.0
+          SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
+          SHFMT_VERSION: 3.8.0
+          SHFMT_SHA256: 27b3c6f9d9592fc5b4856c341d1ff2c88856709b9e76469313642a1d7b558fe0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/shellcheck.tar.xz" "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSL -o "$RUNNER_TEMP/shfmt" "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_amd64"
+          printf '%s  %s\n' "$SHELLCHECK_SHA256" "$RUNNER_TEMP/shellcheck.tar.xz" "$SHFMT_SHA256" "$RUNNER_TEMP/shfmt" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/shellcheck.tar.xz" -C "$RUNNER_TEMP"
+          install -D -m 0755 "$RUNNER_TEMP/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "$RUNNER_TEMP/bin/shellcheck"
+          install -D -m 0755 "$RUNNER_TEMP/shfmt" "$RUNNER_TEMP/bin/shfmt"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: shellcheck install.sh service/install service/wd-token-issuer
+      - run: shfmt -d -ln posix -i 2 -bn install.sh service/install service/wd-token-issuer
+
+  docker-tests:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Run the tests that need docker
+        run: cargo test --locked -- --ignored
+
+  static:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install musl-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - run: rustup toolchain install
+      - run: cargo test --locked --target x86_64-unknown-linux-musl
+      - run: cargo build --locked --release --target x86_64-unknown-linux-musl
+      - name: Check that the binary is statically linked
+        run: |
+          headers="$(readelf -lW "target/x86_64-unknown-linux-musl/release/wd")"
+          dynamic="$(readelf -dW "target/x86_64-unknown-linux-musl/release/wd")"
+          case "$headers $dynamic" in
+            *INTERP* | *NEEDED*)
+              echo "::error::the binary is not statically linked"
+              exit 1
+              ;;
+          esac
+      - name: Check that the bundled musl matches MUSL_VERSION
+        env:
+          MUSL_VERSION: 1.2.5
+        run: |
+          libc="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-musl/lib/self-contained/libc.a"
+          if ! strings "$libc" | grep -xF "$MUSL_VERSION" >/dev/null; then
+            echo "::error::the musl bundled with Rust is not $MUSL_VERSION: update MUSL_VERSION here and MUSL_VERSION and MUSL_SHA256 in release.yml"
+            exit 1
+          fi
+      - name: Run the binary on glibc and musl images
+        run: |
+          for image in debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a; do
+            docker run --rm --network none -v "$PWD/target/x86_64-unknown-linux-musl/release/wd:/usr/local/bin/wd:ro" "$image" wd --version
+          done

@@ -1,0 +1,6 @@
+# Keep in sync with licenses.allow in deny.toml.
+accepted = ["MIT"]
+targets = ["x86_64-unknown-linux-musl"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
