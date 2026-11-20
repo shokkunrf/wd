@@ -15,9 +15,9 @@ wdはworkspaceとinstanceを扱うCLIで、Rustで書く。配るのは1つの�
 - フォーマッタがPRと関係のない行を変えるときは、整形だけを別のPRにして先に出す。squashマージでは、同じPRの中でcommitを分けても1つになるためである
 - PRはdraftで作る。readyにするのは人である
 - まだpushしていないcommitへの修正は、pushする前にローカルでそのcommitに入れて組み直す
-- push済みのcommitを直すときは、draftの間なら組み直してforce pushする。readyの後の修正は、レビュアーが差分を確かめやすい粒度のcommitとして足し、force pushはしない。readyの後に`develop`の変更を取り込むときは、rebaseせずmergeする
-- 組み直すときは、直すものを先にローカルで修正のcommitとして足し、そのHEADのSHAを控えてから組み直す。組み直しでは中身を変えず、控えたSHAとの`git diff`が空であることを確かめる
-- force pushは、`gh pr view <PR> --json headRefOid`でリモートのSHAを取り、そのSHAが組み直す前に控えたSHAの履歴に含まれることを確かめてから、`--force-with-lease`に渡して行う
+- push済みのcommitを直すときは、draftの間なら組み直してforce pushする。readyの後の修正は、レビュアーが差分を確かめやすい粒度のcommitとして足し、force pushはしない。`develop`の変更は、draftの間ならrebaseで、readyの後ならmergeで取り込む
+- 組み直すときは、直すものを先にローカルで修正のcommitとして足し、そのHEADのSHAを控えてから組み直す。組み直しでは中身を変えず、控えたSHAとの`git diff`が空であることを確かめる。`develop`へのrebaseは組み直しと分け、組み直しを確かめてから行う
+- force pushは、`gh pr view <PR> --json headRefOid`でリモートのSHAを取り、そのSHAが、組み直しやrebaseを始める前に控えたSHAの履歴に含まれることを確かめてから、`--force-with-lease`に渡して行う。rebaseだけのときも、始める前にHEADのSHAを控える
 - 試しに作ったファイルやコアダンプをcommitに入れない
 
 ## 言語
