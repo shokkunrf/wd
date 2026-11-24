@@ -3,7 +3,7 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::fs::DirError;
+use crate::fs::{DirError, ReadError, WriteError};
 use crate::output::{escape, quote};
 use crate::root;
 use crate::yaml;
@@ -64,9 +64,47 @@ pub enum Error {
     NotDir {
         path: PathBuf,
     },
+    HomeUnset,
+    RootConflict {
+        config: PathBuf,
+        recorded: String,
+        given: String,
+    },
 }
 
 impl Error {
+    pub fn read(path: &Path, err: ReadError) -> Error {
+        let path = path.to_owned();
+        match err {
+            ReadError::Symlink => Error::Symlink { path },
+            ReadError::TooLarge(size) => Error::Yaml {
+                path,
+                error: yaml::Error::too_large(size),
+            },
+            err => Error::Unreadable {
+                path,
+                reason: err.to_string(),
+            },
+        }
+    }
+
+    pub fn write(path: &Path, err: WriteError) -> Error {
+        let path = path.to_owned();
+        match err {
+            WriteError::Io(err) => Error::Filesystem {
+                action: "write",
+                path,
+                reason: err.to_string(),
+            },
+            WriteError::Symlink => Error::Symlink { path },
+            WriteError::NotRegular => Error::Filesystem {
+                action: "write",
+                path,
+                reason: "something other than a regular file is there".to_owned(),
+            },
+        }
+    }
+
     /// `action` is the verb of the operation that met `err` at `path`.
     pub fn dir(action: &'static str, path: &Path, err: DirError) -> Error {
         let path = path.to_owned();
@@ -156,6 +194,22 @@ impl fmt::Display for Error {
                 f,
                 "{} is not a directory; check what it is and remove it by hand",
                 quote_path(path)
+            ),
+            Error::HomeUnset => write!(
+                f,
+                "HOME is not set to an absolute path, so wd cannot find ~/.config/wd; set HOME"
+            ),
+            Error::RootConflict {
+                config,
+                recorded,
+                given,
+            } => write!(
+                f,
+                "{} records the root {}, but --root gives {}; nothing was written; to change the root, edit {} yourself",
+                quote_path(config),
+                quote(recorded),
+                quote(given),
+                quote_path(config)
             ),
         }
     }

@@ -2,6 +2,7 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -68,23 +69,129 @@ fn text(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
+fn config_dir(dir: &Path) -> PathBuf {
+    dir.join("home/.config/wd")
+}
+
+fn config_yaml(dir: &Path) -> PathBuf {
+    config_dir(dir).join("config.yaml")
+}
+
+#[allow(clippy::unwrap_used)]
+fn mode(path: &Path) -> u32 {
+    fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
+}
+
 #[test]
-fn it_creates_the_root_controls_and_workspaces() {
+fn it_creates_the_root_its_directories_and_config_yaml() {
     let dir = dir("creates");
     let root = dir.join("a/b/root");
     assert_passes(&init(&dir, &["--root", text(&root)]));
     assert!(root.join("controls").is_dir());
     assert!(root.join("workspaces").is_dir());
+    assert_eq!(
+        fs::read_to_string(config_yaml(&dir)).unwrap(),
+        format!("root: {}\n", text(&root))
+    );
+    assert_eq!(mode(&config_dir(&dir)), 0o700);
+    assert_eq!(mode(&config_yaml(&dir)), 0o600);
 }
 
 #[test]
-fn a_second_run_with_the_same_root_passes() {
+fn a_second_run_with_the_same_root_passes_and_changes_nothing() {
     let dir = dir("again");
     let root = dir.join("root");
     assert_passes(&init(&dir, &["--root", text(&root)]));
     fs::write(root.join("workspaces/marker"), "").unwrap();
+    let before = fs::read(config_yaml(&dir)).unwrap();
     assert_passes(&init(&dir, &[&format!("--root={}", text(&root))]));
+    assert_passes(&init(&dir, &["--root", &format!("{}/", text(&root))]));
     assert!(root.join("workspaces/marker").is_file());
+    assert_eq!(fs::read(config_yaml(&dir)).unwrap(), before);
+}
+
+#[test]
+fn a_different_root_is_refused_showing_both_and_nothing_changes() {
+    let dir = dir("conflict");
+    let root = dir.join("root");
+    let other = dir.join("other");
+    assert_passes(&init(&dir, &["--root", text(&root)]));
+    let before = fs::read(config_yaml(&dir)).unwrap();
+    let config = text(&config_yaml(&dir)).to_owned();
+    assert_fails(
+        &init(&dir, &["--root", text(&other)]),
+        &format!(
+            "wd: error: \"{config}\" records the root \"{}\", but --root gives \"{}\"; nothing was written; to change the root, edit \"{config}\" yourself\n",
+            text(&root),
+            text(&other)
+        ),
+    );
+    assert!(!other.exists());
+    assert_eq!(fs::read(config_yaml(&dir)).unwrap(), before);
+}
+
+#[test]
+fn a_root_that_needs_quotes_is_written_quoted() {
+    let dir = dir("quoted");
+    let root = dir.join("a #b");
+    assert_passes(&init(&dir, &["--root", text(&root)]));
+    assert_eq!(
+        fs::read_to_string(config_yaml(&dir)).unwrap(),
+        format!("root: \"{}\"\n", text(&root))
+    );
+    assert_passes(&init(&dir, &["--root", text(&root)]));
+}
+
+#[test]
+fn a_symlink_in_place_of_config_yaml_is_refused_and_nothing_is_written() {
+    let dir = dir("config_symlink");
+    let root = dir.join("root");
+    fs::create_dir_all(config_dir(&dir)).unwrap();
+    fs::write(dir.join("target.yaml"), format!("root: {}\n", text(&root))).unwrap();
+    std::os::unix::fs::symlink(dir.join("target.yaml"), config_yaml(&dir)).unwrap();
+    assert_fails(
+        &init(&dir, &["--root", text(&root)]),
+        &format!(
+            "wd: error: \"{}\" is a symlink, which wd does not follow; check where it points and remove it by hand\n",
+            text(&config_yaml(&dir))
+        ),
+    );
+    assert!(!root.exists());
+}
+
+#[test]
+fn an_invalid_config_yaml_is_reported_by_line_and_column() {
+    let dir = dir("config_invalid");
+    let root = dir.join("root");
+    fs::create_dir_all(config_dir(&dir)).unwrap();
+    fs::write(config_yaml(&dir), "rot: /a\nroot: true\n").unwrap();
+    let config = text(&config_yaml(&dir)).to_owned();
+    assert_fails(
+        &init(&dir, &["--root", text(&root)]),
+        &format!(
+            "wd: error: {config}: line 1, column 1: unknown key `rot`\n\
+             wd: error: {config}: line 2, column 7: `root` must be a string, but the plain value \"true\" is read as a boolean; write it in quotes to use it as a string\n"
+        ),
+    );
+    assert!(!root.exists());
+}
+
+#[test]
+fn without_home_nothing_is_created() {
+    let dir = dir("no_home");
+    let root = dir.join("root");
+    for home in [None, Some(""), Some("home")] {
+        let mut command = command(&dir, &["--root", text(&root)]);
+        command.env_remove("HOME");
+        if let Some(home) = home {
+            command.env("HOME", home);
+        }
+        assert_fails(
+            &command.output().unwrap(),
+            "wd: error: HOME is not set to an absolute path, so wd cannot find ~/.config/wd; set HOME\n",
+        );
+        assert!(!root.exists());
+    }
 }
 
 #[test]
@@ -99,6 +206,7 @@ fn a_relative_root_is_refused_and_nothing_is_created() {
         "wd: error: the root \"root\" from --root is not an absolute path; give a path that starts with \"/\"\n",
     );
     assert!(!dir.join("root").exists());
+    assert!(!config_dir(&dir).exists());
 }
 
 #[test]
@@ -129,6 +237,7 @@ fn a_git_directory_or_file_above_the_root_is_refused_and_nothing_is_created() {
             ),
         );
         assert!(!dir.join(parent).join("sub").exists());
+        assert!(!config_dir(&dir).exists());
     }
 }
 
@@ -168,6 +277,7 @@ fn a_git_directory_reached_through_a_missing_component_and_dot_dot_is_refused() 
     );
     assert!(!dir.join("nonexist").exists());
     assert!(!dir.join("g/controls").exists());
+    assert!(!config_dir(&dir).exists());
 }
 
 #[test]

@@ -78,6 +78,7 @@ CIで検査しないものは、レビューで見る。
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
 - `src/fs.rs` — ファイルシステムへの操作のラッパー
 - `src/location.rs` — コマンドが動いてよい場所の検査。`WD_WORKSPACE`の有無で判定する
+- `src/config.rs` — `~/.config/wd/`の場所と、`config.yaml`の`root:`の読み書き
 - `src/root.rs` — rootの検査。絶対パスで、文字列のままのパスとrealpathの祖先に`.git`が無いこと
 - `src/yaml.rs` — YAMLの共通の読み取り。1文書を、所有する木に読む
 - `src/name.rs` — 正準形の名前の検査
