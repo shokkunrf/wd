@@ -76,8 +76,26 @@ struct Element<'a> {
     entries: &'a [Entry],
 }
 
+/// A workspace.yaml that passed every check.
+#[derive(Debug)]
+pub struct Workspace {
+    control: Name,
+    control_url: RepoUrl,
+}
+
+impl Workspace {
+    pub fn control(&self) -> &Name {
+        &self.control
+    }
+
+    /// The `url` of the element of `repos` that `control` names.
+    pub fn control_url(&self) -> &RepoUrl {
+        &self.control_url
+    }
+}
+
 /// Checks a parsed workspace.yaml.
-pub fn check(root: &Node) -> Result<(), Failure> {
+pub fn check(root: &Node) -> Result<Workspace, Failure> {
     let top = root.as_map("the document")?;
 
     // The types of the keys in the key table. The first mismatch stops the check.
@@ -143,7 +161,7 @@ pub fn check(root: &Node) -> Result<(), Failure> {
 
     let mut formats = Vec::new();
     checked(top, "", "name", &mut formats, Name::parse);
-    checked(top, "", "control", &mut formats, Name::parse);
+    let control = checked(top, "", "control", &mut formats, Name::parse);
     checked(top, "", "agent", &mut formats, Agent::parse);
     let mut urls = Vec::new();
     for element in &elements {
@@ -158,7 +176,7 @@ pub fn check(root: &Node) -> Result<(), Failure> {
             check_default_ref,
         );
         if let (Some(url), Some(node)) = (url, find(entries, "url")) {
-            urls.push((scope, node.pos(), url));
+            urls.push((scope, text(entries, "name"), node.pos(), url));
         }
     }
     problems.append(&mut formats);
@@ -208,7 +226,7 @@ pub fn check(root: &Node) -> Result<(), Failure> {
         }
     }
     let mut seen: Vec<(&str, &RepoUrl)> = Vec::new();
-    for (scope, at, url) in &urls {
+    for (scope, _, at, url) in &urls {
         let id = url.identifier();
         if let Some((_, earlier)) = seen.iter().find(|(seen_id, _)| *seen_id == id) {
             problems.push(Error::new(
@@ -233,10 +251,18 @@ pub fn check(root: &Node) -> Result<(), Failure> {
         ));
     }
 
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(Failure::Problems(problems))
+    // Without problems, `control` names an element whose `url` passed.
+    let control_url = control.as_ref().and_then(|control| {
+        urls.into_iter()
+            .find(|(_, name, _, _)| *name == Some(control.as_str()))
+            .map(|(_, _, _, url)| url)
+    });
+    match (control, control_url) {
+        (Some(control), Some(control_url)) if problems.is_empty() => Ok(Workspace {
+            control,
+            control_url,
+        }),
+        _ => Err(Failure::Problems(problems)),
     }
 }
 
@@ -350,7 +376,7 @@ repos:
     default_ref: branch:develop
 ";
 
-    fn run(text: &str) -> Result<(), Failure> {
+    fn run(text: &str) -> Result<Workspace, Failure> {
         check(&yaml::parse(text.as_bytes()).unwrap())
     }
 
@@ -369,8 +395,13 @@ repos:
     }
 
     #[test]
-    fn a_valid_workspace_passes() {
-        assert!(run(VALID).is_ok());
+    fn a_valid_workspace_passes_with_the_url_that_control_names() {
+        let workspace = run(VALID).unwrap();
+        assert_eq!(workspace.control().as_str(), "sandbox");
+        assert_eq!(
+            workspace.control_url().as_str(),
+            "git@github.com:shokkunrf/autopilot-sandbox.git"
+        );
     }
 
     #[test]

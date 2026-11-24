@@ -10,6 +10,12 @@ use crate::process::{self, Stdin};
 use crate::repo_url::RepoUrl;
 use crate::root::Root;
 use crate::token::Token;
+use crate::yaml;
+
+const WORKSPACE_YAML: &str = "workspace.yaml";
+const ORIGIN_REFS: &str = "refs/remotes/origin/";
+const ORIGIN_HEAD: &str = "refs/remotes/origin/HEAD";
+const REGULAR_MODE: &str = "100644";
 
 /// The variable that passes the token of a github-app identity to the credential helper, so it is never on disk.
 const TOKEN_VAR: &str = "WD_CONTROL_TOKEN";
@@ -109,6 +115,119 @@ impl ControlCopy {
         Ok(())
     }
 
+    pub fn url(&self) -> &RepoUrl {
+        &self.url
+    }
+
+    /// The bytes of workspace.yaml in the commit that origin/HEAD points to.
+    pub fn workspace_yaml(&self) -> Result<Vec<u8>, Error> {
+        let url = || self.url.as_str().to_owned();
+        let branches = self.origin_branches()?;
+        if branches.is_empty() {
+            return Err(Error::OriginEmpty { url: url() });
+        }
+        // Resolved once, so that every read below sees the same commit.
+        let head = self.origin_head()?;
+        let entry = match &head {
+            Some(commit) => self.ls_tree(commit)?,
+            None => None,
+        };
+        let Some(entry) = entry else {
+            let mut having = Vec::new();
+            for branch in branches {
+                // Only a hint, so a branch that git cannot read counts as one without the file.
+                if let Ok(Some(_)) = self.ls_tree(&format!("{ORIGIN_REFS}{branch}")) {
+                    having.push(branch);
+                }
+            }
+            return Err(Error::NoWorkspaceYaml {
+                url: url(),
+                head_resolved: head.is_some(),
+                branches: having,
+            });
+        };
+        if entry.mode != REGULAR_MODE {
+            return Err(Error::WorkspaceYamlMode {
+                url: url(),
+                mode: entry.mode,
+            });
+        }
+        if let Some(size) = entry.size
+            && size > yaml::MAX_BYTES as u64
+        {
+            return Err(Error::ControlWorkspace {
+                url: url(),
+                problems: vec![yaml::Error::too_large(size)],
+            });
+        }
+        let out = self.git(
+            Reach::Copy,
+            &[
+                &self.git_dir(),
+                OsStr::new("cat-file"),
+                OsStr::new("blob"),
+                OsStr::new(&entry.object),
+            ],
+        )?;
+        self.succeeded("cat-file", &out)?;
+        Ok(out.stdout)
+    }
+
+    /// The names of the branches under refs/remotes/origin/.
+    fn origin_branches(&self) -> Result<Vec<String>, Error> {
+        let out = self.git(
+            Reach::Copy,
+            &[
+                &self.git_dir(),
+                OsStr::new("for-each-ref"),
+                OsStr::new("--format=%(refname)"),
+                OsStr::new(ORIGIN_REFS),
+            ],
+        )?;
+        self.succeeded("for-each-ref", &out)?;
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter(|line| *line != ORIGIN_HEAD)
+            .filter_map(|line| line.strip_prefix(ORIGIN_REFS))
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// The commit that origin/HEAD points to, or None when it does not lead to one.
+    fn origin_head(&self) -> Result<Option<String>, Error> {
+        let out = self.git(
+            Reach::Copy,
+            &[
+                &self.git_dir(),
+                OsStr::new("rev-parse"),
+                OsStr::new("--verify"),
+                OsStr::new("--quiet"),
+                OsStr::new(&format!("{ORIGIN_HEAD}^{{commit}}")),
+            ],
+        )?;
+        if !out.status.success() {
+            return Ok(None);
+        }
+        Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_owned()))
+    }
+
+    /// The entry of workspace.yaml at the top of `tree_ish`, or None when it has none.
+    fn ls_tree(&self, tree_ish: &str) -> Result<Option<TreeEntry>, Error> {
+        let out = self.git(
+            Reach::Copy,
+            &[
+                &self.git_dir(),
+                OsStr::new("ls-tree"),
+                OsStr::new("-l"),
+                OsStr::new(tree_ish),
+                OsStr::new("--"),
+                OsStr::new(WORKSPACE_YAML),
+            ],
+        )?;
+        self.succeeded("ls-tree", &out)?;
+        Ok(TreeEntry::parse(&out.stdout))
+    }
+
     fn git_dir(&self) -> OsString {
         let mut arg = OsString::from("--git-dir=");
         arg.push(&self.path);
@@ -143,6 +262,32 @@ impl ControlCopy {
                 stderr: out.stderr.clone(),
             })
         }
+    }
+}
+
+/// One line of `git ls-tree -l`.
+#[derive(Debug, PartialEq, Eq)]
+struct TreeEntry {
+    mode: String,
+    object: String,
+    /// None for an entry that is not a blob.
+    size: Option<u64>,
+}
+
+impl TreeEntry {
+    /// Reads `<mode> <type> <object> <size>\t<path>` of the first line, or None when there is no line.
+    fn parse(stdout: &[u8]) -> Option<TreeEntry> {
+        let text = String::from_utf8_lossy(stdout);
+        let (meta, _) = text.lines().next()?.split_once('\t')?;
+        let fields: Vec<&str> = meta.split_whitespace().collect();
+        let [mode, _, object, size] = fields[..] else {
+            return None;
+        };
+        Some(TreeEntry {
+            mode: mode.to_owned(),
+            object: object.to_owned(),
+            size: size.parse().ok(),
+        })
     }
 }
 
@@ -183,4 +328,30 @@ fn app_env() -> Vec<(String, String)> {
         env.push((format!("GIT_CONFIG_VALUE_{index}"), value));
     }
     env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tree_entry_is_read_from_ls_tree() {
+        assert_eq!(
+            TreeEntry::parse(b"100644 blob 0123abcd     149\tworkspace.yaml\n"),
+            Some(TreeEntry {
+                mode: "100644".to_owned(),
+                object: "0123abcd".to_owned(),
+                size: Some(149),
+            })
+        );
+        assert_eq!(
+            TreeEntry::parse(b"040000 tree 0123abcd       -\tworkspace.yaml\n"),
+            Some(TreeEntry {
+                mode: "040000".to_owned(),
+                object: "0123abcd".to_owned(),
+                size: None,
+            })
+        );
+        assert_eq!(TreeEntry::parse(b""), None);
+    }
 }

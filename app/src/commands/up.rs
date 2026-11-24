@@ -10,6 +10,8 @@ use crate::location::Runs;
 use crate::name::Name;
 use crate::repo_url::RepoUrl;
 use crate::root;
+use crate::workspace::{self, Failure, Workspace};
+use crate::yaml;
 
 pub const RUNS: Runs = Runs::Host;
 
@@ -31,7 +33,44 @@ pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {
     };
     let auth = precheck::run(&identity, &url)?;
     let copy = ControlCopy::create(&root, url, auth)?;
-    copy.fetch()
+    copy.fetch()?;
+    let bytes = copy.workspace_yaml()?;
+    let workspace = read_workspace(copy.url(), &bytes)?;
+    same_control(copy.url(), &workspace)
+}
+
+/// Checks workspace.yaml of the control as validate does.
+fn read_workspace(url: &RepoUrl, bytes: &[u8]) -> Result<Workspace, Error> {
+    let failure = match yaml::parse(bytes) {
+        Ok(root) => match workspace::check(&root) {
+            Ok(workspace) => return Ok(workspace),
+            Err(failure) => failure,
+        },
+        Err(error) => Failure::Yaml(error),
+    };
+    let problems = match failure {
+        Failure::Yaml(error) => vec![error],
+        Failure::Problems(problems) => problems,
+    };
+    Err(Error::ControlWorkspace {
+        url: url.as_str().to_owned(),
+        problems,
+    })
+}
+
+/// Checks that `control` of workspace.yaml names the control that `url` gives.
+fn same_control(url: &RepoUrl, workspace: &Workspace) -> Result<(), Error> {
+    let control_url = workspace.control_url();
+    if control_url.identifier() == url.identifier() {
+        return Ok(());
+    }
+    Err(Error::ControlMismatch {
+        url: url.as_str().to_owned(),
+        url_id: url.identifier().to_owned(),
+        control: workspace.control().as_str().to_owned(),
+        control_url: control_url.as_str().to_owned(),
+        control_id: control_url.identifier().to_owned(),
+    })
 }
 
 fn parse(parser: &mut lexopt::Parser) -> Result<Args, Error> {

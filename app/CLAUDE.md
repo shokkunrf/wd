@@ -87,7 +87,7 @@ CIで検査しないものは、レビューで見る。
 - `src/name.rs` — 正準形の名前の検証済みの型
 - `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
 - `src/ledger.rs` — 名義台帳の読み込みと、選んだエントリの検査。ファイルは開かず、中身を受け取る
-- `src/control.rs` — controlのコピーの作成とfetch。名義の型で、gitへの資格情報の渡し方を決める
+- `src/control.rs` — controlのコピーの作成とfetchと、`origin/HEAD`のworkspace.yamlの読み出し。名義の型で、gitへの資格情報の渡し方を決める
 - `src/token.rs` — 発行ソケットに発行を頼むクライアント。トークンは表示しない型に包む
 - `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト

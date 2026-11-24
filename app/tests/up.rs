@@ -197,6 +197,15 @@ impl Host {
             .join(format!("{repo}.git"))
     }
 
+    /// Creates origins/me/control.git whose default branch has a valid workspace.yaml.
+    fn control(&self) -> PathBuf {
+        self.origin(
+            "me/control.git",
+            "develop",
+            &[("workspace.yaml", WORKSPACE_YAML)],
+        )
+    }
+
     /// Creates the bare origin `origins/<path>` whose default branch `branch` has `files`.
     fn origin(&self, path: &str, branch: &str, files: &[(&str, &str)]) -> PathBuf {
         self.origin_with_head(path, branch, branch, files)
@@ -211,29 +220,40 @@ impl Host {
         files: &[(&str, &str)],
     ) -> PathBuf {
         let origin = self.origins().join(path);
+        fs::create_dir_all(&origin).unwrap();
+        self.setup_git(&origin, &["init", "-q", "--bare", "-b", head]);
+        self.push(&origin, branch, &self.work(files));
+        origin
+    }
+
+    /// A fresh working tree with `files` staged.
+    fn work(&self, files: &[(&str, &str)]) -> PathBuf {
         let work = self.dir.join("work");
         if work.exists() {
             fs::remove_dir_all(&work).unwrap();
         }
         fs::create_dir_all(&work).unwrap();
-        self.setup_git(&work, &["init", "-q", "-b", branch]);
+        self.setup_git(&work, &["init", "-q"]);
         for (name, content) in files {
             fs::write(work.join(name), content).unwrap();
         }
         self.setup_git(&work, &["add", "-A"]);
-        self.setup_git(&work, &["commit", "-q", "--allow-empty", "-m", "init"]);
-        fs::create_dir_all(&origin).unwrap();
-        self.setup_git(&origin, &["init", "-q", "--bare", "-b", head]);
+        work
+    }
+
+    /// Commits what `work` staged and pushes it to `branch` of `origin`, replacing what was there.
+    fn push(&self, origin: &Path, branch: &str, work: &Path) {
+        self.setup_git(work, &["commit", "-q", "--allow-empty", "-m", "init"]);
         self.setup_git(
-            &work,
+            work,
             &[
                 "push",
                 "-q",
+                "--force",
                 origin.to_str().unwrap(),
-                &format!("HEAD:{branch}"),
+                &format!("HEAD:refs/heads/{branch}"),
             ],
         );
-        origin
     }
 
     /// Runs git for setting up a test, apart from the person's own git configuration.
@@ -370,7 +390,7 @@ fn up_creates_and_fetches_the_control_copy_silently() {
 #[test]
 fn urls_differing_only_in_case_and_form_share_one_copy_and_keep_the_url_as_given() {
     let host = Host::new("case");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     std::os::unix::fs::symlink(host.origins().join("me"), host.origins().join("Me")).unwrap();
     std::os::unix::fs::symlink(
         host.origins().join("me/control.git"),
@@ -393,10 +413,19 @@ fn urls_differing_only_in_case_and_form_share_one_copy_and_keep_the_url_as_given
 }
 
 #[test]
-fn a_failing_set_head_does_not_stop_up() {
+fn an_origin_head_naming_no_branch_stops_up_naming_the_branches_with_workspace_yaml() {
     let host = Host::new("set_head_fails");
-    host.origin_with_head("me/control.git", "main", "develop", &[]);
-    assert_passes(&host.up(&["https://github.com/me/control.git", "--identity", "me"]));
+    let origin = host.origin_with_head(
+        "me/control.git",
+        "main",
+        "develop",
+        &[("workspace.yaml", WORKSPACE_YAML)],
+    );
+    host.push(&origin, "other", &host.work(&[("README", "")]));
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: origin/HEAD of the control \"https://github.com/me/control.git\" does not lead to a commit, so workspace.yaml cannot be read from the default branch, but the branches \"develop\" have it; merge the pull request that brings it to the default branch\n",
+    );
     let copy = host.copy("me", "control");
     assert!(copy.join("refs/remotes/origin/develop").exists());
     assert!(!copy.join("refs/remotes/origin/HEAD").exists());
@@ -405,7 +434,7 @@ fn a_failing_set_head_does_not_stop_up() {
 #[test]
 fn a_failing_git_command_names_the_copy_and_leaves_it_for_the_next_up_to_replace() {
     let host = Host::new("git_fails");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     host.install(
         "git",
         &format!(
@@ -436,7 +465,7 @@ fn a_failing_git_command_names_the_copy_and_leaves_it_for_the_next_up_to_replace
 #[test]
 fn an_old_copy_is_replaced() {
     let host = Host::new("replace");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let copy = host.copy("me", "control");
     fs::create_dir_all(copy.join("stale/deep")).unwrap();
     fs::write(copy.join("stale/deep/file"), "").unwrap();
@@ -481,7 +510,7 @@ fn a_symlink_or_a_file_above_the_copy_position_stops_up() {
 #[test]
 fn a_symlink_or_a_file_at_the_copy_position_stops_up() {
     let host = Host::new("copy_position");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let copy = host.copy("me", "control");
     fs::create_dir_all(copy.parent().unwrap()).unwrap();
     fs::create_dir_all(host.dir.join("elsewhere")).unwrap();
@@ -510,7 +539,7 @@ fn a_symlink_or_a_file_at_the_copy_position_stops_up() {
 #[test]
 fn git_variables_in_the_environment_of_wd_do_not_reach_git() {
     let host = Host::new("git_env");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let out = host
         .command(&["https://github.com/me/control.git", "--identity", "me"])
         .env("GIT_DIR", "/nonexistent")
@@ -591,7 +620,7 @@ fn an_unreachable_control_stops_up_and_leaves_the_copy() {
 #[test]
 fn without_identity_up_stops_before_creating_the_copy() {
     let host = Host::new("no_identity");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     assert_fails(
         &host.up(&["https://github.com/me/control.git"]),
         "wd: error: wd up \"https://github.com/me/control.git\" brings up a new workspace, so it needs --identity <key>; choose a key under `identities` in ~/.config/wd/identities.yaml\n",
@@ -676,7 +705,7 @@ fn arguments_up_does_not_accept_are_refused() {
 #[test]
 fn the_root_comes_from_wd_root_before_config_yaml() {
     let host = Host::new("root_order");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let config = host.home().join(".config/wd");
     fs::create_dir_all(&config).unwrap();
     fs::write(config.join("config.yaml"), "root: /nonexistent/root\n").unwrap();
@@ -827,7 +856,7 @@ fn without_git_up_says_to_install_it() {
 #[test]
 fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
     let host = Host::new("github_app");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     // If ~/.gitconfig were read, its longer prefix would win over the logging git's.
     fs::write(
         host.home().join(".gitconfig"),
@@ -845,7 +874,7 @@ fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
     assert_passes(&out);
     assert_eq!(host.requests(), ["token bot control\n"]);
     let calls = host.git_calls();
-    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls.len(), 8, "{calls:?}");
     for call in &calls {
         for line in [
             "GIT_CONFIG_GLOBAL=/dev/null",
@@ -870,7 +899,10 @@ fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
         .iter()
         .map(|call| call.lines().any(|l| l == token_line))
         .collect();
-    assert_eq!(has_token, [false, false, true, true]);
+    assert_eq!(
+        has_token,
+        [false, false, true, true, false, false, false, false]
+    );
     let copy = host.copy("me", "control");
     assert!(
         calls[2].starts_with(&format!(
@@ -908,7 +940,7 @@ fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
 #[test]
 fn a_github_user_identity_lets_git_read_the_terminal() {
     let host = Host::new("user_stdin");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     host.log_git();
     let input = host.dir.join("input");
     fs::write(&input, "typed\n").unwrap();
@@ -929,7 +961,7 @@ fn a_github_user_identity_lets_git_read_the_terminal() {
 #[test]
 fn an_identity_missing_from_the_ledger_stops_up_before_creating_the_copy() {
     let host = Host::new("ledger_key");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     assert_fails(
         &host.up(&["https://github.com/me/control.git", "--identity", "other"]),
         &format!(
@@ -994,7 +1026,7 @@ fn every_problem_of_the_selected_entry_is_reported_by_line_and_column() {
 #[test]
 fn entries_other_than_the_selected_one_are_checked_only_for_their_value_types() {
     let host = Host::new("ledger_others");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let url = "https://github.com/me/control.git";
     fs::write(
         host.ledger(),
@@ -1133,6 +1165,160 @@ fn without_linger_alone_up_stops_before_creating_the_copy() {
     );
     assert_eq!(host.requests(), ["token me control\n"]);
     assert_no_copy(&host);
+}
+
+#[test]
+fn up_follows_the_default_branch_of_origin_after_it_is_renamed() {
+    let host = Host::new("renamed");
+    let origin = host.control();
+    let url = "https://github.com/me/control.git";
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+
+    host.push(
+        &origin,
+        "main",
+        &host.work(&[("workspace.yaml", WORKSPACE_YAML)]),
+    );
+    host.push(
+        &origin,
+        "develop",
+        &host.work(&[("workspace.yaml", "name: x\n")]),
+    );
+    host.setup_git(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+    let copy = host.copy("me", "control");
+    assert_eq!(
+        host.inspect(&copy, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/main"
+    );
+
+    host.setup_git(&origin, &["update-ref", "-d", "refs/heads/develop"]);
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+    assert!(!copy.join("refs/remotes/origin/develop").exists());
+}
+
+#[test]
+fn an_empty_origin_stops_up() {
+    let host = Host::new("origin_empty");
+    let origin = host.origins().join("me/control.git");
+    fs::create_dir_all(&origin).unwrap();
+    host.setup_git(&origin, &["init", "-q", "--bare"]);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: origin of the control \"https://github.com/me/control.git\" has no branches; in your clone of the control, write workspace.yaml with wd set, then commit and push it\n",
+    );
+}
+
+#[test]
+fn workspace_yaml_only_on_another_branch_asks_to_merge_it() {
+    let host = Host::new("on_branch");
+    let origin = host.origin("me/control.git", "develop", &[("README", "")]);
+    let url = "https://github.com/me/control.git";
+    let missing = "wd: error: workspace.yaml is not at origin/HEAD of the control \"https://github.com/me/control.git\"";
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "{missing}, and no branch has it; in your clone of the control, write workspace.yaml with wd set, then commit and push it to the default branch\n"
+        ),
+    );
+    host.push(
+        &origin,
+        "add-workspace",
+        &host.work(&[("workspace.yaml", WORKSPACE_YAML)]),
+    );
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "{missing}, but the branches \"add-workspace\" have it; merge the pull request that brings it to the default branch\n"
+        ),
+    );
+}
+
+#[test]
+fn a_workspace_yaml_that_is_not_a_regular_file_shows_its_mode() {
+    let host = Host::new("mode");
+    let origin = host.origins().join("me/control.git");
+    fs::create_dir_all(&origin).unwrap();
+    host.setup_git(&origin, &["init", "-q", "--bare", "-b", "develop"]);
+    let work = host.work(&[("workspace.yaml", WORKSPACE_YAML)]);
+    host.setup_git(&work, &["update-index", "--chmod=+x", "workspace.yaml"]);
+    host.push(&origin, "develop", &work);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: workspace.yaml at origin/HEAD of the control \"https://github.com/me/control.git\" does not pass validate, since it is not a regular file but has the mode 100755; in your clone of the control, make it a regular file that is not executable, then commit and push it\n",
+    );
+}
+
+#[test]
+fn an_invalid_workspace_yaml_shows_the_problems_that_validate_shows() {
+    let host = Host::new("invalid");
+    let text = WORKSPACE_YAML
+        .replace("name: demo", "name: Demo")
+        .replace("agent: claude\n", "");
+    host.origin("me/control.git", "develop", &[("workspace.yaml", &text)]);
+    let prefix = "wd: error: workspace.yaml at origin/HEAD of the control \"https://github.com/me/control.git\": ";
+    let fix =
+        "wd: error: fix workspace.yaml in your clone of the control, then commit and push it\n";
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "me"]);
+    fs::write(host.dir.join("workspace.yaml"), &text).unwrap();
+    let validate = Command::new(env!("CARGO_BIN_EXE_wd"))
+        .args([
+            "validate",
+            host.dir.join("workspace.yaml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let problems: String = stderr(&validate)
+        .lines()
+        .map(|line| {
+            let (_, problem) = line.split_once(".yaml: ").unwrap();
+            format!("{prefix}{problem}\n")
+        })
+        .collect();
+    assert_eq!(problems.lines().count(), 2, "{problems}");
+    assert_fails(&out, &format!("{problems}{fix}"));
+
+    host.push(
+        &host.origins().join("me/control.git"),
+        "develop",
+        &host.work(&[("workspace.yaml", "name: [\n")]),
+    );
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "me"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).starts_with(&format!("{prefix}line ")),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).ends_with(fix), "{}", stderr(&out));
+}
+
+#[test]
+fn a_workspace_yaml_over_the_size_limit_is_not_read() {
+    let host = Host::new("too_large");
+    let text = format!("{WORKSPACE_YAML}#{}\n", "x".repeat(1 << 20));
+    host.origin("me/control.git", "develop", &[("workspace.yaml", &text)]);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: workspace.yaml at origin/HEAD of the control \"https://github.com/me/control.git\": the file is {} bytes, over the limit of 1048576 bytes (1 MiB)\nwd: error: fix workspace.yaml in your clone of the control, then commit and push it\n",
+            text.len()
+        ),
+    );
+}
+
+#[test]
+fn a_control_that_names_another_repo_shows_both_identifiers() {
+    let host = Host::new("mismatch");
+    host.origin(
+        "me/other.git",
+        "develop",
+        &[("workspace.yaml", WORKSPACE_YAML)],
+    );
+    assert_fails(
+        &host.up(&["https://github.com/me/other.git", "--identity", "me"]),
+        "wd: error: `control` of workspace.yaml at origin/HEAD of \"https://github.com/me/other.git\" names \"control\", whose url \"https://github.com/me/control.git\" gives the identifier \"github.com/me/control\", but the URL given to wd up gives \"github.com/me/other\"; fix `control` or that url in your clone of the control, or give wd up the URL of the control\n",
+    );
 }
 
 #[test]
