@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -70,6 +70,10 @@ impl Host {
             fs::create_dir_all(host.dir.join(sub)).unwrap();
         }
         std::os::unix::fs::symlink(real_git(), host.fakebin().join("git")).unwrap();
+        for tool in ["devcontainer", "docker"] {
+            host.install(tool, "#!/bin/sh\necho 1.0\n");
+        }
+        host.linger("yes");
         host.serve_tokens();
         fs::create_dir_all(host.ledger().parent().unwrap()).unwrap();
         fs::write(host.ledger(), LEDGER).unwrap();
@@ -119,6 +123,17 @@ impl Host {
                 stream.write_all(answer.as_bytes()).unwrap();
             }
         });
+    }
+
+    /// Puts a loginctl on PATH that shows `value` as the user's Linger.
+    fn linger(&self, value: &str) {
+        self.install(
+            "loginctl",
+            &format!(
+                "#!/bin/sh\ntest \"$*\" = 'show-user {} --property=Linger' || exit 2\necho Linger={value}\n",
+                uid()
+            ),
+        );
     }
 
     fn answer(&self, line: &str) {
@@ -273,6 +288,11 @@ impl Host {
         assert!(out.status.success(), "git {all:?}: {}", stderr(&out));
         String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn uid() -> u32 {
+    fs::metadata("/proc/self").unwrap().uid()
 }
 
 #[allow(clippy::unwrap_used, clippy::panic)]
@@ -1038,5 +1058,105 @@ fn an_identity_missing_from_the_ledger_is_not_tried_on_the_token_socket() {
     let out = host.up(&["https://github.com/me/control.git", "--identity", "other"]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(stderr(&out).lines().count(), 1, "{}", stderr(&out));
+    assert!(host.requests().is_empty());
+}
+
+#[test]
+fn every_missing_precheck_is_reported_in_order_before_creating_the_copy() {
+    let host = Host::new("prechecks");
+    for tool in ["devcontainer", "docker"] {
+        fs::remove_file(host.fakebin().join(tool)).unwrap();
+    }
+    host.linger("no");
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "other"]);
+    assert_fails(
+        &out,
+        &format!(
+            "wd: error: cannot run devcontainer: No such file or directory (os error 2); install the devcontainer CLI
+wd: error: cannot run docker: No such file or directory (os error 2); install docker
+wd: error: {}: line 2, column 3: the identity \"other\" is not in the ledger; the keys present are \"me\", \"bot\"; pick one of them with --identity, or add an entry with that key under `identities`
+wd: error: Linger is not enabled for user {}; run loginctl enable-linger
+",
+            host.ledger().display(),
+            uid()
+        ),
+    );
+    assert!(host.requests().is_empty());
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_failing_tool_or_loginctl_is_named_with_its_status() {
+    let host = Host::new("tools_fail");
+    host.install("docker", "#!/bin/sh\necho 'docker: broken' >&2\nexit 4\n");
+    host.install(
+        "loginctl",
+        "#!/bin/sh\necho 'Failed to get user: not logged in or lingering' >&2\nexit 1\n",
+    );
+    host.answer("err issuer down\n");
+    let socket = host.runtime_dir().join("wd/token.sock");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: cannot run docker: docker --version failed with exit status: 4: docker: broken; check the installation of docker
+wd: error: the token socket \"{}\" did not issue a token for \"me\" and the repo \"control\": the issuer answered: issuer down; check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock
+wd: error: cannot check Linger for user {}: loginctl show-user failed with exit status: 1: Failed to get user: not logged in or lingering; run loginctl enable-linger
+",
+            socket.display(),
+            uid()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_loginctl_up_says_to_install_it() {
+    let host = Host::new("no_loginctl");
+    fs::remove_file(host.fakebin().join("loginctl")).unwrap();
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: cannot check Linger: cannot run loginctl: No such file or directory (os error 2); install systemd's loginctl, then run loginctl enable-linger\n",
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_linger_alone_up_stops_before_creating_the_copy() {
+    let host = Host::new("linger");
+    host.linger("no");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: Linger is not enabled for user {}; run loginctl enable-linger\n",
+            uid()
+        ),
+    );
+    assert_eq!(host.requests(), ["token me control\n"]);
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_home_the_ledger_is_one_of_the_missing_prechecks() {
+    let host = Host::new("no_home");
+    for tool in ["devcontainer", "docker"] {
+        fs::remove_file(host.fakebin().join(tool)).unwrap();
+    }
+    host.linger("no");
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "me"])
+        .env_remove("HOME")
+        .output()
+        .unwrap();
+    let lines: Vec<String> = stderr(&out).lines().map(str::to_owned).collect();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!(
+        lines[2],
+        "wd: error: HOME is not set to an absolute path, so wd cannot find ~/.config/wd; set HOME"
+    );
+    assert!(
+        lines[3].starts_with("wd: error: Linger is not enabled"),
+        "{lines:?}"
+    );
     assert!(host.requests().is_empty());
 }
