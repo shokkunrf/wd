@@ -4,10 +4,13 @@ use std::path::PathBuf;
 
 use crate::error::Error;
 use crate::fs::{self, ReadError};
+use crate::location::Runs;
 use crate::workspace::{self, Failure};
 use crate::yaml;
 
 const DEFAULT_PATH: &str = "workspace.yaml";
+
+pub const RUNS: Runs = Runs::Anywhere;
 
 /// `parser` has consumed the command name.
 pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {

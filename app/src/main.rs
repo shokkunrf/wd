@@ -1,9 +1,11 @@
 mod commands;
 mod error;
 mod fs;
+mod location;
 mod name;
 mod output;
 mod repo_url;
+mod root;
 mod workspace;
 mod yaml;
 
@@ -12,6 +14,9 @@ use std::io::ErrorKind;
 use std::process::ExitCode;
 
 use error::Error;
+use location::Runs;
+
+type RunCommand = fn(&mut lexopt::Parser) -> Result<(), Error>;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -39,10 +44,19 @@ fn run(args: Vec<OsString>) -> Result<(), Error> {
             }
             output::line(VERSION)
         }
-        Some(Value(command)) => match command.to_str() {
-            Some("validate") => commands::validate::run(&mut parser),
-            _ => Err(Error::UnknownCommand(command)),
-        },
+        Some(Value(command)) => {
+            let (name, runs, run): (&'static str, Runs, RunCommand) = match command.to_str() {
+                Some("init") => ("init", commands::init::RUNS, commands::init::run),
+                Some("validate") => (
+                    "validate",
+                    commands::validate::RUNS,
+                    commands::validate::run,
+                ),
+                _ => return Err(Error::UnknownCommand(command)),
+            };
+            location::check(name, runs)?;
+            run(&mut parser)
+        }
         Some(arg) => Err(arg.unexpected().into()),
         None => Err(Error::NoCommand),
     }
