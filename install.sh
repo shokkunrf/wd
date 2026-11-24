@@ -1,6 +1,5 @@
 #!/bin/sh
 # Usage: curl -fsSL https://github.com/shokkunrf/wd/releases/download/v<version>/install.sh | sh
-# releases/latest/download/install.sh installs the latest release that is not a pre-release.
 set -eu
 
 VERSION=""
