@@ -77,6 +77,10 @@ fn config_yaml(dir: &Path) -> PathBuf {
     config_dir(dir).join("config.yaml")
 }
 
+fn identities_yaml(dir: &Path) -> PathBuf {
+    config_dir(dir).join("identities.yaml")
+}
+
 #[allow(clippy::unwrap_used)]
 fn mode(path: &Path) -> u32 {
     fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777
@@ -95,6 +99,43 @@ fn it_creates_the_root_its_directories_and_config_yaml() {
     );
     assert_eq!(mode(&config_dir(&dir)), 0o700);
     assert_eq!(mode(&config_yaml(&dir)), 0o600);
+    let ledger = fs::read_to_string(identities_yaml(&dir)).unwrap();
+    assert!(ledger.contains("# identities:\n"), "{ledger}");
+    assert!(ledger.lines().all(|line| line.starts_with('#')), "{ledger}");
+    assert_eq!(mode(&identities_yaml(&dir)), 0o600);
+}
+
+#[test]
+fn an_existing_ledger_is_left_untouched() {
+    let dir = dir("ledger_kept");
+    let root = dir.join("root");
+    fs::create_dir_all(config_dir(&dir)).unwrap();
+    fs::write(identities_yaml(&dir), "identities: {}\n").unwrap();
+    fs::set_permissions(identities_yaml(&dir), fs::Permissions::from_mode(0o640)).unwrap();
+    assert_passes(&init(&dir, &["--root", text(&root)]));
+    assert_eq!(
+        fs::read_to_string(identities_yaml(&dir)).unwrap(),
+        "identities: {}\n"
+    );
+    assert_eq!(mode(&identities_yaml(&dir)), 0o640);
+}
+
+#[test]
+fn a_symlink_in_place_of_the_ledger_is_refused() {
+    let dir = dir("ledger_symlink");
+    let root = dir.join("root");
+    fs::create_dir_all(config_dir(&dir)).unwrap();
+    std::os::unix::fs::symlink(dir.join("nowhere.yaml"), identities_yaml(&dir)).unwrap();
+    assert_fails(
+        &init(&dir, &["--root", text(&root)]),
+        &format!(
+            "wd: error: \"{}\" is a symlink, which wd does not follow; check where it points and remove it by hand\n",
+            text(&identities_yaml(&dir))
+        ),
+    );
+    assert!(!dir.join("nowhere.yaml").exists());
+    assert!(!root.exists());
+    assert!(!config_yaml(&dir).exists());
 }
 
 #[test]

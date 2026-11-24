@@ -72,7 +72,7 @@ CIで検査しないものは、レビューで見る。
 
 - `src/main.rs` — 引数の解析とコマンドのdispatch
 - `src/commands.rs` — サブコマンドのモジュールの宣言。各コマンドは`src/commands/`に置く
-- `src/commands/init.rs` — `init`サブコマンド
+- `src/commands/init.rs` — `init`サブコマンド。名義台帳の雛形を持つ
 - `src/commands/validate.rs` — `validate`サブコマンド
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み

@@ -96,16 +96,26 @@ pub fn write_new(path: &Path, bytes: &[u8], mode: u32) -> Result<bool, WriteErro
     match opened {
         Ok(mut file) => file.write_all(bytes).map(|()| true).map_err(WriteError::Io),
         Err(err) if err.kind() == ErrorKind::AlreadyExists => {
-            let meta = std::fs::symlink_metadata(path).map_err(WriteError::Io)?;
-            if meta.file_type().is_symlink() {
-                Err(WriteError::Symlink)
-            } else if meta.is_file() {
-                Ok(false)
-            } else {
-                Err(WriteError::NotRegular)
-            }
+            regular_or_absent(path).map(|()| false)
         }
         Err(err) => Err(WriteError::Io(err)),
+    }
+}
+
+/// Checks that `write_new` would either write the file or find a regular file there.
+#[allow(clippy::disallowed_methods)]
+pub fn regular_or_absent(path: &Path) -> Result<(), WriteError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(WriteError::Io(err)),
+    };
+    if meta.file_type().is_symlink() {
+        Err(WriteError::Symlink)
+    } else if meta.is_file() {
+        Ok(())
+    } else {
+        Err(WriteError::NotRegular)
     }
 }
 

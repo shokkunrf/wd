@@ -8,6 +8,7 @@ use crate::output::escape;
 use crate::yaml;
 
 pub const CONFIG_YAML: &str = "config.yaml";
+pub const IDENTITIES_YAML: &str = "identities.yaml";
 const ROOT_KEY: &str = "root";
 
 /// `$HOME/.config/wd`, which does not depend on XDG_CONFIG_HOME.
