@@ -70,6 +70,41 @@ pub enum Error {
         recorded: String,
         given: String,
     },
+    RootUndecided {
+        config: PathBuf,
+    },
+    RootMissing {
+        root: PathBuf,
+        from: root::Source,
+    },
+    MissingTarget,
+    NeitherUrlNorName {
+        arg: String,
+        url_reason: String,
+        name_reason: String,
+    },
+    UpByName {
+        name: String,
+    },
+    IdentityRequired {
+        url: String,
+    },
+    BadIdentity {
+        reason: String,
+    },
+    GitSpawn {
+        reason: String,
+    },
+    GitFailed {
+        command: &'static str,
+        path: PathBuf,
+        status: String,
+        stderr: Vec<u8>,
+    },
+    Unreachable {
+        url: String,
+        stderr: Vec<u8>,
+    },
 }
 
 impl Error {
@@ -126,6 +161,25 @@ fn show(path: &Path) -> String {
 
 fn quote_path(path: &Path) -> String {
     quote(&path.to_string_lossy())
+}
+
+/// The lines of git's stderr with control characters escaped, since a remote can put any byte in them.
+fn git_lines(f: &mut fmt::Formatter<'_>, stderr: &[u8]) -> fmt::Result {
+    for line in String::from_utf8_lossy(stderr).lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        writeln!(f)?;
+        for c in line.chars() {
+            if c.is_control() {
+                write!(f, "{}", c.escape_debug())?;
+            } else {
+                write!(f, "{c}")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl fmt::Display for Error {
@@ -211,6 +265,66 @@ impl fmt::Display for Error {
                 quote(given),
                 quote_path(config)
             ),
+            Error::RootUndecided { config } => write!(
+                f,
+                "the root is not decided: WD_ROOT is not set and {} does not exist; run wd init --root <dir>",
+                quote_path(config)
+            ),
+            Error::RootMissing { root, from } => write!(
+                f,
+                "the root {} from {from} does not exist; run wd init --root {}",
+                quote_path(root),
+                quote_path(root)
+            ),
+            Error::MissingTarget => write!(
+                f,
+                "wd up needs the URL of a control or the name of a workspace: wd up <URL> --identity <key>"
+            ),
+            Error::NeitherUrlNorName {
+                arg,
+                url_reason,
+                name_reason,
+            } => write!(
+                f,
+                "{} is neither the URL of a control nor the name of a workspace\nas a URL: {url_reason}\nas a name: {name_reason}",
+                quote(arg)
+            ),
+            Error::UpByName { name } => write!(
+                f,
+                "wd up {} names a workspace, which this version of wd cannot bring up yet; give the control's URL: wd up <URL> --identity <key>",
+                quote(name)
+            ),
+            Error::IdentityRequired { url } => write!(
+                f,
+                "wd up {} brings up a new workspace, so it needs --identity <key>; choose a key under `identities` in ~/.config/wd/identities.yaml",
+                quote(url)
+            ),
+            Error::BadIdentity { reason } => write!(f, "--identity is invalid: {reason}"),
+            Error::GitSpawn { reason } => {
+                write!(f, "cannot run git: {reason}; install git 2.32 or newer")
+            }
+            Error::GitFailed {
+                command,
+                path,
+                status,
+                stderr,
+            } => {
+                write!(
+                    f,
+                    "git {command} failed for {} with {status}; remove {} and run wd up again",
+                    quote_path(path),
+                    quote_path(path)
+                )?;
+                git_lines(f, stderr)
+            }
+            Error::Unreachable { url, stderr } => {
+                write!(
+                    f,
+                    "cannot reach the control {}; check the network and the credentials, and for a github-app identity that the GitHub App is installed on that repository",
+                    quote(url)
+                )?;
+                git_lines(f, stderr)
+            }
         }
     }
 }
@@ -218,5 +332,21 @@ impl fmt::Display for Error {
 impl From<lexopt::Error> for Error {
     fn from(err: lexopt::Error) -> Self {
         Error::Args(err)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_lines_keep_quotes_and_escape_control_characters() {
+        let err = Error::Unreachable {
+            url: "https://github.com/o/r".to_owned(),
+            stderr: b"fatal: 'x' \x1b[31mred\n\nremote: done  \n".to_vec(),
+        };
+        let text = err.to_string();
+        let lines: Vec<&str> = text.lines().skip(1).collect();
+        assert_eq!(lines, ["fatal: 'x' \\u{1b}[31mred", "remote: done"]);
     }
 }

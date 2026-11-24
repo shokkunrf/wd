@@ -51,7 +51,7 @@ pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {
         what: "the value of --root",
         value,
     })?;
-    let root = root::check(&value, Source::Flag)?;
+    let root = root::check(&value, &Source::Flag)?;
     let config_dir = config::dir()?;
     let config_yaml = config_dir.join(config::CONFIG_YAML);
     let recorded = config::read_root(&config_yaml)?;
