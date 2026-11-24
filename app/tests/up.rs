@@ -2,9 +2,12 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 
 const WORKSPACE_YAML: &str = "name: demo
 control: control
@@ -29,9 +32,15 @@ const LEDGER: &str = "identities:
     email: 1+bot[bot]@users.noreply.github.com
 ";
 
-/// A host in a fresh directory outside any git working tree, with its own HOME, PATH and root.
+const TOKEN: &str = "tok123";
+
+/// A host in a fresh directory outside any git working tree, with its own HOME, PATH, root and token socket.
 struct Host {
     dir: PathBuf,
+    /// The lines that the token socket received.
+    requests: Arc<Mutex<Vec<String>>>,
+    /// The line that the token socket answers.
+    answer: Arc<Mutex<String>>,
 }
 
 impl Drop for Host {
@@ -46,7 +55,11 @@ impl Drop for Host {
 impl Host {
     fn new(test: &str) -> Host {
         let dir = std::env::temp_dir().join(format!("wd-up-{}-{test}", std::process::id()));
-        let host = Host { dir };
+        let host = Host {
+            dir,
+            requests: Arc::default(),
+            answer: Arc::new(Mutex::new(format!("ok {TOKEN} 2026-01-01T00:00:00Z\n"))),
+        };
         for sub in [
             "home",
             "fakebin",
@@ -57,6 +70,7 @@ impl Host {
             fs::create_dir_all(host.dir.join(sub)).unwrap();
         }
         std::os::unix::fs::symlink(real_git(), host.fakebin().join("git")).unwrap();
+        host.serve_tokens();
         fs::create_dir_all(host.ledger().parent().unwrap()).unwrap();
         fs::write(host.ledger(), LEDGER).unwrap();
         let origins = host.origins();
@@ -84,6 +98,37 @@ impl Host {
         self.dir.join("origins")
     }
 
+    fn runtime_dir(&self) -> PathBuf {
+        self.dir.join("run")
+    }
+
+    /// Answers each connection to the token socket, from a thread that outlives the test.
+    fn serve_tokens(&self) {
+        let socket = self.runtime_dir().join("wd/token.sock");
+        fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let listener = UnixListener::bind(socket).unwrap();
+        let requests = Arc::clone(&self.requests);
+        let answer = Arc::clone(&self.answer);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                requests.lock().unwrap().push(line);
+                let answer = answer.lock().unwrap().clone();
+                stream.write_all(answer.as_bytes()).unwrap();
+            }
+        });
+    }
+
+    fn answer(&self, line: &str) {
+        *self.answer.lock().unwrap() = line.to_owned();
+    }
+
+    fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+
     fn ledger(&self) -> PathBuf {
         self.home().join(".config/wd/identities.yaml")
     }
@@ -101,12 +146,13 @@ impl Host {
         fs::rename(&file, self.fakebin().join(name)).unwrap();
     }
 
-    /// Puts a git on PATH that logs each call and fetches github.com from origins/ even without ~/.gitconfig.
+    /// Puts a git on PATH that logs each call, and on fetch what the credential helpers answer for two hosts.
     fn log_git(&self) {
+        // The injected rule stands in for ~/.gitconfig, which a github-app identity does not read.
         self.install(
             "git",
             &format!(
-                "#!/bin/sh\n{{\n  echo \"argv: $*\"\n  (PATH=/usr/bin:/bin; env | grep -E '^(GIT_|WD_CONTROL_)' | sort)\n  if IFS= read -r line; then echo \"stdin: $line\"; else echo 'stdin: none'; fi\n}} >>{log}\nexec {git} -c url.{origins}/.insteadOf=https://github.com/ \"$@\"\n",
+                "#!/bin/sh\n{{\n  echo \"argv: $*\"\n  (PATH=/usr/bin:/bin; env | grep -E '^(GIT_|WD_CONTROL_)' | sort)\n  if IFS= read -r line; then echo \"stdin: $line\"; else echo 'stdin: none'; fi\n  case \" $* \" in *\" fetch \"*)\n    for h in github.com example.com; do printf 'protocol=https\\nhost=%s\\n\\n' $h | {git} credential fill 2>&1; done ;;\n  esac\n}} >>{log}\nexec {git} -c url.{origins}/.insteadOf=https://github.com/ \"$@\"\n",
                 log = self.git_log().display(),
                 git = real_git().display(),
                 origins = self.origins().display(),
@@ -194,7 +240,7 @@ impl Host {
         out
     }
 
-    /// `wd up` with only HOME, PATH and WD_ROOT set; add or remove variables on the result.
+    /// `wd up` with only HOME, PATH, XDG_RUNTIME_DIR and WD_ROOT set; add or remove variables on the result.
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_wd"));
         command
@@ -204,6 +250,7 @@ impl Host {
             .env_clear()
             .env("HOME", self.home())
             .env("PATH", self.fakebin())
+            .env("XDG_RUNTIME_DIR", self.runtime_dir())
             .env("WD_ROOT", self.root());
         command
     }
@@ -254,6 +301,24 @@ fn assert_fails(out: &Output, expected_stderr: &str) {
     assert_eq!(stderr(out), expected_stderr);
 }
 
+#[allow(clippy::unwrap_used)]
+fn assert_no_file_contains(dir: &Path, text: &str) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let meta = fs::symlink_metadata(&path).unwrap();
+        if meta.is_dir() {
+            assert_no_file_contains(&path, text);
+        } else if meta.is_file() {
+            let bytes = fs::read(&path).unwrap();
+            assert!(
+                !bytes.windows(text.len()).any(|w| w == text.as_bytes()),
+                "{text} is in {}",
+                path.display()
+            );
+        }
+    }
+}
+
 fn assert_no_copy(host: &Host) {
     assert!(!host.root().join("controls/github.com").exists());
 }
@@ -268,6 +333,7 @@ fn up_creates_and_fetches_the_control_copy_silently() {
     );
     let url = "https://github.com/me/control.git";
     assert_passes(&host.up(&[url, "--identity", "me"]));
+    assert_eq!(host.requests(), ["token me control\n"]);
     let copy = host.copy("me", "control");
     assert_eq!(
         host.inspect(&copy, &["rev-parse", "--is-bare-repository"]),
@@ -436,6 +502,49 @@ fn git_variables_in_the_environment_of_wd_do_not_reach_git() {
         .output()
         .unwrap();
     assert_passes(&out);
+}
+
+#[test]
+fn git_variables_in_the_environment_of_wd_do_not_reach_git_for_a_github_app_identity() {
+    let host = Host::new("git_env_app");
+    host.origin(
+        "me/control.git",
+        "develop",
+        &[("workspace.yaml", WORKSPACE_YAML)],
+    );
+    host.log_git();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "bot"])
+        .env("GIT_DIR", "/nonexistent")
+        .env(
+            "GIT_CONFIG_PARAMETERS",
+            "'url.https://invalid.example/.insteadof'='https://github.com/'",
+        )
+        .output()
+        .unwrap();
+    assert_passes(&out);
+    for call in host.git_calls() {
+        assert!(
+            !call.contains("GIT_DIR=") && !call.contains("GIT_CONFIG_PARAMETERS="),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn an_unreachable_control_does_not_show_the_token_of_a_github_app_identity() {
+    let host = Host::new("unreachable_app");
+    host.log_git();
+    let out = host.up(&["https://github.com/me/missing.git", "--identity", "bot"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(
+        err.starts_with(
+            "wd: error: cannot reach the control \"https://github.com/me/missing.git\""
+        ),
+        "{err}"
+    );
+    assert!(!err.contains(TOKEN), "{err}");
 }
 
 #[test]
@@ -714,6 +823,7 @@ fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
         .output()
         .unwrap();
     assert_passes(&out);
+    assert_eq!(host.requests(), ["token bot control\n"]);
     let calls = host.git_calls();
     assert_eq!(calls.len(), 4, "{calls:?}");
     for call in &calls {
@@ -721,21 +831,58 @@ fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
             "GIT_CONFIG_GLOBAL=/dev/null",
             "GIT_TERMINAL_PROMPT=0",
             "GIT_ASKPASS=",
+            "GIT_CONFIG_COUNT=3",
             "GIT_CONFIG_KEY_0=credential.helper",
             "GIT_CONFIG_VALUE_0=",
+            "GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_2=git@github.com:",
             "stdin: none",
         ] {
             assert!(call.lines().any(|l| l == line), "{line} in {call}");
         }
     }
+    for call in &calls {
+        let argv = call.lines().next().unwrap();
+        assert!(!argv.contains(TOKEN), "{argv}");
+    }
+    let token_line = format!("WD_CONTROL_TOKEN={TOKEN}");
+    let has_token: Vec<bool> = calls
+        .iter()
+        .map(|call| call.lines().any(|l| l == token_line))
+        .collect();
+    assert_eq!(has_token, [false, false, true, true]);
+    let copy = host.copy("me", "control");
     assert!(
         calls[2].starts_with(&format!(
             "--git-dir={} fetch --prune origin\n",
-            host.copy("me", "control").display()
+            copy.display()
         )),
         "{}",
         calls[2]
     );
+    assert!(
+        calls[2].contains(&format!(
+            "protocol=https\nhost=github.com\nusername=x-access-token\npassword={TOKEN}\n"
+        )),
+        "{}",
+        calls[2]
+    );
+    assert_eq!(
+        calls[2]
+            .lines()
+            .filter(|l| l.starts_with("password="))
+            .count(),
+        1,
+        "{}",
+        calls[2]
+    );
+    assert_eq!(
+        host.inspect(&copy, &["config", "remote.origin.url"]),
+        "https://github.com/me/control.git"
+    );
+    for dir in [host.root(), host.home()] {
+        assert_no_file_contains(&dir, TOKEN);
+    }
 }
 
 #[test]
@@ -794,6 +941,7 @@ fn a_missing_or_symlinked_ledger_stops_up_before_creating_the_copy() {
             host.ledger().display()
         ),
     );
+    assert!(host.requests().is_empty());
     assert_no_copy(&host);
 }
 
@@ -819,6 +967,7 @@ fn every_problem_of_the_selected_entry_is_reported_by_line_and_column() {
         .map(|line| format!("wd: error: {}: {line}\n", ledger.display()))
         .collect::<String>(),
     );
+    assert!(host.requests().is_empty());
     assert_no_copy(&host);
 }
 
@@ -845,4 +994,49 @@ fn entries_other_than_the_selected_one_are_checked_only_for_their_value_types() 
             host.ledger().display()
         ),
     );
+}
+
+#[test]
+fn a_github_user_identity_also_tries_issuing_a_token_for_the_repo_as_written() {
+    let host = Host::new("trial_user");
+    host.answer("err identity is not github-app type: me\n");
+    let socket = host.runtime_dir().join("wd/token.sock");
+    assert_fails(
+        &host.up(&["https://github.com/Me/Control.GIT", "--identity", "me"]),
+        &format!(
+            "wd: error: the token socket \"{}\" did not issue a token for \"me\" and the repo \"Control\": the issuer answered: identity is not github-app type: me; check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock\n",
+            socket.display()
+        ),
+    );
+    assert_eq!(host.requests(), ["token me Control\n"]);
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_the_token_socket_up_stops_before_creating_the_copy() {
+    let host = Host::new("no_socket");
+    let runtime_dir = host.dir.join("other-run");
+    fs::create_dir_all(&runtime_dir).unwrap();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "bot"])
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .output()
+        .unwrap();
+    assert_fails(
+        &out,
+        &format!(
+            "wd: error: the token socket \"{}/wd/token.sock\" did not issue a token for \"bot\" and the repo \"control\": cannot connect: No such file or directory (os error 2); check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock\n",
+            runtime_dir.display()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn an_identity_missing_from_the_ledger_is_not_tried_on_the_token_socket() {
+    let host = Host::new("trial_skipped");
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "other"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stderr(&out).lines().count(), 1, "{}", stderr(&out));
+    assert!(host.requests().is_empty());
 }

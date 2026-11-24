@@ -10,6 +10,7 @@ pub struct RepoUrl {
     url: String,
     owner: String,
     repo: String,
+    repo_as_written: String,
     identifier: String,
 }
 
@@ -51,12 +52,14 @@ impl RepoUrl {
             ));
         }
         let owner = owner.to_lowercase();
+        let repo_as_written = repo.to_owned();
         let repo = repo.to_lowercase();
         Ok(RepoUrl {
             url: text.to_owned(),
             identifier: format!("{HOST}/{owner}/{repo}"),
             owner,
             repo,
+            repo_as_written,
         })
     }
 
@@ -77,6 +80,11 @@ impl RepoUrl {
     /// Lowercase, so that URLs differing only in case share one control copy.
     pub fn repo(&self) -> &str {
         &self.repo
+    }
+
+    /// In its case as written, since the token request names the repo the way the person wrote it.
+    pub fn repo_as_written(&self) -> &str {
+        &self.repo_as_written
     }
 
     pub fn as_str(&self) -> &str {
@@ -189,8 +197,8 @@ mod tests {
         );
         let url = RepoUrl::parse("https://github.com/Me/Repo.GIT").unwrap();
         assert_eq!(
-            (url.host(), url.owner(), url.repo()),
-            ("github.com", "me", "repo")
+            (url.host(), url.owner(), url.repo(), url.repo_as_written()),
+            ("github.com", "me", "repo", "Repo")
         );
     }
 

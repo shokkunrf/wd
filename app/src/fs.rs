@@ -3,7 +3,8 @@
 use std::fmt;
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -196,4 +197,16 @@ pub fn remove_dir_tree(path: &Path) -> Result<(), DirError> {
     } else {
         Err(DirError::NotDir)
     }
+}
+
+/// Follows a symlink at `path`, as connecting to a socket always does.
+#[allow(clippy::disallowed_methods)]
+pub fn connect(path: &Path) -> io::Result<UnixStream> {
+    UnixStream::connect(path)
+}
+
+/// The user ID that wd runs as, which owns /proc/self.
+#[allow(clippy::disallowed_methods)]
+pub fn own_uid() -> io::Result<u32> {
+    std::fs::metadata("/proc/self").map(|meta| meta.uid())
 }

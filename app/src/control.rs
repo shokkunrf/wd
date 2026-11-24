@@ -9,11 +9,16 @@ use crate::fs;
 use crate::process::{self, Stdin};
 use crate::repo_url::RepoUrl;
 use crate::root::Root;
+use crate::token::Token;
+
+/// The variable that passes the token of a github-app identity to the credential helper, so it is never on disk.
+const TOKEN_VAR: &str = "WD_CONTROL_TOKEN";
 
 /// How git gets the credentials to fetch, by the type of the selected identity.
 #[derive(Debug)]
 pub enum Auth {
-    App,
+    /// The token that the issuer gave for the control's repo.
+    App(Token),
     User,
 }
 
@@ -49,32 +54,41 @@ impl ControlCopy {
 
     fn init(&self) -> Result<(), Error> {
         // An empty template leaves out the sample hooks, so the copy has no hooks at all.
-        let out = self.git(&[
-            OsStr::new("init"),
-            OsStr::new("--bare"),
-            OsStr::new("--template="),
-            self.path.as_os_str(),
-        ])?;
+        let out = self.git(
+            Reach::Copy,
+            &[
+                OsStr::new("init"),
+                OsStr::new("--bare"),
+                OsStr::new("--template="),
+                self.path.as_os_str(),
+            ],
+        )?;
         self.succeeded("init", &out)?;
-        let out = self.git(&[
-            &self.git_dir(),
-            OsStr::new("remote"),
-            OsStr::new("add"),
-            OsStr::new("origin"),
-            OsStr::new(self.url.as_str()),
-        ])?;
+        let out = self.git(
+            Reach::Copy,
+            &[
+                &self.git_dir(),
+                OsStr::new("remote"),
+                OsStr::new("add"),
+                OsStr::new("origin"),
+                OsStr::new(self.url.as_str()),
+            ],
+        )?;
         self.succeeded("remote add", &out)
     }
 
     /// Fetches origin and points `origin/HEAD` at origin's current default branch.
     pub fn fetch(&self) -> Result<(), Error> {
         let git_dir = self.git_dir();
-        let out = self.git(&[
-            &git_dir,
-            OsStr::new("fetch"),
-            OsStr::new("--prune"),
-            OsStr::new("origin"),
-        ])?;
+        let out = self.git(
+            Reach::Origin,
+            &[
+                &git_dir,
+                OsStr::new("fetch"),
+                OsStr::new("--prune"),
+                OsStr::new("origin"),
+            ],
+        )?;
         if !out.status.success() {
             return Err(Error::Unreachable {
                 url: self.url.as_str().to_owned(),
@@ -82,13 +96,16 @@ impl ControlCopy {
             });
         }
         // Only a spawn error stops here, since origin's HEAD may name a branch that does not exist.
-        self.git(&[
-            &git_dir,
-            OsStr::new("remote"),
-            OsStr::new("set-head"),
-            OsStr::new("origin"),
-            OsStr::new("-a"),
-        ])?;
+        self.git(
+            Reach::Origin,
+            &[
+                &git_dir,
+                OsStr::new("remote"),
+                OsStr::new("set-head"),
+                OsStr::new("origin"),
+                OsStr::new("-a"),
+            ],
+        )?;
         Ok(())
     }
 
@@ -98,10 +115,16 @@ impl ControlCopy {
         arg
     }
 
-    fn git(&self, args: &[&OsStr]) -> Result<Output, Error> {
-        let (env, stdin) = match self.auth {
+    fn git(&self, reach: Reach, args: &[&OsStr]) -> Result<Output, Error> {
+        let (env, stdin) = match &self.auth {
             // A github-app identity runs unattended, so git must not wait for the terminal.
-            Auth::App => (app_env(), Stdin::Null),
+            Auth::App(token) => {
+                let mut env = app_env();
+                if let Reach::Origin = reach {
+                    env.push((TOKEN_VAR.to_owned(), token.as_str().to_owned()));
+                }
+                (env, Stdin::Null)
+            }
             Auth::User => (Vec::new(), Stdin::Inherit),
         };
         process::git(&self.cwd, args, &env, stdin).map_err(|err| Error::GitSpawn {
@@ -123,12 +146,30 @@ impl ControlCopy {
     }
 }
 
+/// Whether a git call talks to origin, which is the only kind that gets the token.
+#[derive(Debug, Clone, Copy)]
+enum Reach {
+    Copy,
+    Origin,
+}
+
+/// Answers only https on github.com, the only host a control can be on after the rewrite of git@github.com:.
+fn credential_helper() -> String {
+    format!(
+        "!f() {{ test \"$1\" = get || return 0; p= h=; while IFS= read -r line && test -n \"$line\"; do case \"$line\" in protocol=https) p=1 ;; host=github.com) h=1 ;; esac; done; if test \"$p$h\" = 11; then printf 'username=x-access-token\\npassword=%s\\n' \"${TOKEN_VAR}\"; fi; }}; f"
+    )
+}
+
 /// The variables for a github-app identity, with the configuration passed through GIT_CONFIG_COUNT.
 fn app_env() -> Vec<(String, String)> {
     let config = [
         // An empty value drops the helpers of the system configuration.
-        ("credential.helper", ""),
-        ("url.https://github.com/.insteadOf", "git@github.com:"),
+        ("credential.helper", String::new()),
+        ("credential.helper", credential_helper()),
+        (
+            "url.https://github.com/.insteadOf",
+            "git@github.com:".to_owned(),
+        ),
     ];
     let mut env = vec![
         ("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()),
@@ -139,7 +180,7 @@ fn app_env() -> Vec<(String, String)> {
     ];
     for (index, (key, value)) in config.into_iter().enumerate() {
         env.push((format!("GIT_CONFIG_KEY_{index}"), key.to_owned()));
-        env.push((format!("GIT_CONFIG_VALUE_{index}"), value.to_owned()));
+        env.push((format!("GIT_CONFIG_VALUE_{index}"), value));
     }
     env
 }

@@ -7,18 +7,44 @@ use crate::fs;
 use crate::ledger::{self, Failure, Kind};
 use crate::name::Name;
 use crate::output::quote;
+use crate::repo_url::RepoUrl;
+use crate::token::{self, Token};
 use crate::yaml;
 
-/// How the control copy fetches with `identity`, or every missing item, one per line.
-pub(super) fn run(identity: &Name) -> Result<Auth, Error> {
+/// How the control copy of `url` fetches with `identity`, or every missing item, one per line.
+pub(super) fn run(identity: &Name, url: &RepoUrl) -> Result<Auth, Error> {
     let mut missing = Vec::new();
     let kind = ledger_entry(identity, &mut missing)?;
-    match kind {
-        Some(kind) if missing.is_empty() => Ok(match kind {
-            Kind::App => Auth::App,
-            Kind::User => Auth::User,
-        }),
+    // An identity the ledger cannot give is reported alone, without asking the issuer for it.
+    let token = kind.and_then(|_| trial_issue(identity, url, &mut missing));
+    match (kind, token) {
+        (Some(Kind::App), Some(token)) if missing.is_empty() => Ok(Auth::App(token)),
+        (Some(Kind::User), Some(_)) if missing.is_empty() => Ok(Auth::User),
         _ => Err(Error::Precheck(missing)),
+    }
+}
+
+/// A token for `identity` limited to the control's repo, which proves that the issuer works for it.
+fn trial_issue(identity: &Name, url: &RepoUrl, missing: &mut Vec<String>) -> Option<Token> {
+    let socket = match token::socket_path() {
+        Ok(socket) => socket,
+        Err(reason) => {
+            missing.push(format!("cannot find the token socket: {reason}"));
+            return None;
+        }
+    };
+    let repo = url.repo_as_written();
+    match token::issue(&socket, identity, repo) {
+        Ok(token) => Some(token),
+        Err(reason) => {
+            missing.push(format!(
+                "the token socket {} did not issue a token for {} and the repo {}: {reason}; check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock",
+                quote(&socket.to_string_lossy()),
+                quote(identity.as_str()),
+                quote(repo)
+            ));
+            None
+        }
     }
 }
 
