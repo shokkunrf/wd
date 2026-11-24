@@ -41,6 +41,7 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 - 単体テストは同じファイルの`mod tests`。結合テストは`tests/`で実際のgitを使う。dockerが要るテストは`#[ignore]`にしてCIの別のジョブで走らせる。dev-dependenciesも許可リストの対象
 - muslのビルドはmusl-toolsと`--target x86_64-unknown-linux-musl`で行う
 - 自前のマクロ、async、実装が1つの自前のtraitとジェネリクス、参照を持つ構造体を禁じる
+- 使う側がまだ無いコードは足さない。`expect(dead_code)`が要るものは、使う側と同じtaskで足す
 - レビューを行ったかは自動で検査せず、文で定める
 
 ## CIで検査する規約
