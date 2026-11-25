@@ -14,6 +14,15 @@ pub enum Stdin {
     Inherit,
 }
 
+/// Runs `program` with nothing on its standard input and its output captured.
+#[allow(clippy::disallowed_methods)]
+pub fn capture(program: &str, args: &[&str]) -> io::Result<Output> {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+}
+
 /// Runs git in `cwd` with `env` and without any other GIT_ variable of wd's environment.
 #[allow(clippy::disallowed_methods)]
 pub fn git(

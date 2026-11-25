@@ -2,9 +2,12 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::{Arc, Mutex};
 
 const WORKSPACE_YAML: &str = "name: demo
 control: control
@@ -29,9 +32,15 @@ const LEDGER: &str = "identities:
     email: 1+bot[bot]@users.noreply.github.com
 ";
 
-/// A host in a fresh directory outside any git working tree, with its own HOME, PATH and root.
+const TOKEN: &str = "tok123";
+
+/// A host in a fresh directory outside any git working tree, with its own HOME, PATH, root and token socket.
 struct Host {
     dir: PathBuf,
+    /// The lines that the token socket received.
+    requests: Arc<Mutex<Vec<String>>>,
+    /// The line that the token socket answers.
+    answer: Arc<Mutex<String>>,
 }
 
 impl Drop for Host {
@@ -46,7 +55,11 @@ impl Drop for Host {
 impl Host {
     fn new(test: &str) -> Host {
         let dir = std::env::temp_dir().join(format!("wd-up-{}-{test}", std::process::id()));
-        let host = Host { dir };
+        let host = Host {
+            dir,
+            requests: Arc::default(),
+            answer: Arc::new(Mutex::new(format!("ok {TOKEN} 2026-01-01T00:00:00Z\n"))),
+        };
         for sub in [
             "home",
             "fakebin",
@@ -57,6 +70,11 @@ impl Host {
             fs::create_dir_all(host.dir.join(sub)).unwrap();
         }
         std::os::unix::fs::symlink(real_git(), host.fakebin().join("git")).unwrap();
+        for tool in ["devcontainer", "docker"] {
+            host.install(tool, "#!/bin/sh\necho 1.0\n");
+        }
+        host.linger("yes");
+        host.serve_tokens();
         fs::create_dir_all(host.ledger().parent().unwrap()).unwrap();
         fs::write(host.ledger(), LEDGER).unwrap();
         let origins = host.origins();
@@ -84,6 +102,48 @@ impl Host {
         self.dir.join("origins")
     }
 
+    fn runtime_dir(&self) -> PathBuf {
+        self.dir.join("run")
+    }
+
+    /// Answers each connection to the token socket, from a thread that outlives the test.
+    fn serve_tokens(&self) {
+        let socket = self.runtime_dir().join("wd/token.sock");
+        fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let listener = UnixListener::bind(socket).unwrap();
+        let requests = Arc::clone(&self.requests);
+        let answer = Arc::clone(&self.answer);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                requests.lock().unwrap().push(line);
+                let answer = answer.lock().unwrap().clone();
+                stream.write_all(answer.as_bytes()).unwrap();
+            }
+        });
+    }
+
+    /// Puts a loginctl on PATH that shows `value` as the user's Linger.
+    fn linger(&self, value: &str) {
+        self.install(
+            "loginctl",
+            &format!(
+                "#!/bin/sh\ntest \"$*\" = 'show-user {} --property=Linger' || exit 2\necho Linger={value}\n",
+                uid()
+            ),
+        );
+    }
+
+    fn answer(&self, line: &str) {
+        *self.answer.lock().unwrap() = line.to_owned();
+    }
+
+    fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+
     fn ledger(&self) -> PathBuf {
         self.home().join(".config/wd/identities.yaml")
     }
@@ -101,12 +161,13 @@ impl Host {
         fs::rename(&file, self.fakebin().join(name)).unwrap();
     }
 
-    /// Puts a git on PATH that logs each call and fetches github.com from origins/ even without ~/.gitconfig.
+    /// Puts a git on PATH that logs each call, and on fetch what the credential helpers answer for two hosts.
     fn log_git(&self) {
+        // The injected rule stands in for ~/.gitconfig, which a github-app identity does not read.
         self.install(
             "git",
             &format!(
-                "#!/bin/sh\n{{\n  echo \"argv: $*\"\n  (PATH=/usr/bin:/bin; env | grep -E '^(GIT_|WD_CONTROL_)' | sort)\n  if IFS= read -r line; then echo \"stdin: $line\"; else echo 'stdin: none'; fi\n}} >>{log}\nexec {git} -c url.{origins}/.insteadOf=https://github.com/ \"$@\"\n",
+                "#!/bin/sh\n{{\n  echo \"argv: $*\"\n  (PATH=/usr/bin:/bin; env | grep -E '^(GIT_|WD_CONTROL_)' | sort)\n  if IFS= read -r line; then echo \"stdin: $line\"; else echo 'stdin: none'; fi\n  case \" $* \" in *\" fetch \"*)\n    for h in github.com example.com; do printf 'protocol=https\\nhost=%s\\n\\n' $h | {git} credential fill 2>&1; done ;;\n  esac\n}} >>{log}\nexec {git} -c url.{origins}/.insteadOf=https://github.com/ \"$@\"\n",
                 log = self.git_log().display(),
                 git = real_git().display(),
                 origins = self.origins().display(),
@@ -114,14 +175,32 @@ impl Host {
         );
     }
 
+    /// Puts a git on PATH that prints `line` for --version and runs the real git otherwise.
+    fn git_version(&self, line: &str) {
+        self.install(
+            "git",
+            &format!(
+                "#!/bin/sh\ntest \"$*\" = --version && {{ echo '{line}'; exit 0; }}\nexec {} \"$@\"\n",
+                real_git().display()
+            ),
+        );
+    }
+
     /// The calls that `log_git` logged, one string per call.
-    fn git_calls(&self) -> Vec<String> {
+    fn all_git_calls(&self) -> Vec<String> {
         fs::read_to_string(self.git_log())
             .unwrap()
             .split("argv: ")
             .skip(1)
             .map(str::to_owned)
             .collect()
+    }
+
+    /// Like `all_git_calls`, without the version check of the prechecks.
+    fn git_calls(&self) -> Vec<String> {
+        let mut calls = self.all_git_calls();
+        calls.retain(|call| !call.starts_with("--version\n"));
+        calls
     }
 
     fn root(&self) -> PathBuf {
@@ -134,6 +213,15 @@ impl Host {
             .join("controls/github.com")
             .join(owner)
             .join(format!("{repo}.git"))
+    }
+
+    /// Creates origins/me/control.git whose default branch has a valid workspace.yaml.
+    fn control(&self) -> PathBuf {
+        self.origin(
+            "me/control.git",
+            "develop",
+            &[("workspace.yaml", WORKSPACE_YAML)],
+        )
     }
 
     /// Creates the bare origin `origins/<path>` whose default branch `branch` has `files`.
@@ -150,29 +238,40 @@ impl Host {
         files: &[(&str, &str)],
     ) -> PathBuf {
         let origin = self.origins().join(path);
+        fs::create_dir_all(&origin).unwrap();
+        self.setup_git(&origin, &["init", "-q", "--bare", "-b", head]);
+        self.push(&origin, branch, &self.work(files));
+        origin
+    }
+
+    /// A fresh working tree with `files` staged.
+    fn work(&self, files: &[(&str, &str)]) -> PathBuf {
         let work = self.dir.join("work");
         if work.exists() {
             fs::remove_dir_all(&work).unwrap();
         }
         fs::create_dir_all(&work).unwrap();
-        self.setup_git(&work, &["init", "-q", "-b", branch]);
+        self.setup_git(&work, &["init", "-q"]);
         for (name, content) in files {
             fs::write(work.join(name), content).unwrap();
         }
         self.setup_git(&work, &["add", "-A"]);
-        self.setup_git(&work, &["commit", "-q", "--allow-empty", "-m", "init"]);
-        fs::create_dir_all(&origin).unwrap();
-        self.setup_git(&origin, &["init", "-q", "--bare", "-b", head]);
+        work
+    }
+
+    /// Commits what `work` staged and pushes it to `branch` of `origin`, replacing what was there.
+    fn push(&self, origin: &Path, branch: &str, work: &Path) {
+        self.setup_git(work, &["commit", "-q", "--allow-empty", "-m", "init"]);
         self.setup_git(
-            &work,
+            work,
             &[
                 "push",
                 "-q",
+                "--force",
                 origin.to_str().unwrap(),
-                &format!("HEAD:{branch}"),
+                &format!("HEAD:refs/heads/{branch}"),
             ],
         );
-        origin
     }
 
     /// Runs git for setting up a test, apart from the person's own git configuration.
@@ -194,7 +293,7 @@ impl Host {
         out
     }
 
-    /// `wd up` with only HOME, PATH and WD_ROOT set; add or remove variables on the result.
+    /// `wd up` with only HOME, PATH, XDG_RUNTIME_DIR and WD_ROOT set; add or remove variables on the result.
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_wd"));
         command
@@ -204,6 +303,7 @@ impl Host {
             .env_clear()
             .env("HOME", self.home())
             .env("PATH", self.fakebin())
+            .env("XDG_RUNTIME_DIR", self.runtime_dir())
             .env("WD_ROOT", self.root());
         command
     }
@@ -226,6 +326,11 @@ impl Host {
         assert!(out.status.success(), "git {all:?}: {}", stderr(&out));
         String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn uid() -> u32 {
+    fs::metadata("/proc/self").unwrap().uid()
 }
 
 #[allow(clippy::unwrap_used, clippy::panic)]
@@ -254,6 +359,24 @@ fn assert_fails(out: &Output, expected_stderr: &str) {
     assert_eq!(stderr(out), expected_stderr);
 }
 
+#[allow(clippy::unwrap_used)]
+fn assert_no_file_contains(dir: &Path, text: &str) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let meta = fs::symlink_metadata(&path).unwrap();
+        if meta.is_dir() {
+            assert_no_file_contains(&path, text);
+        } else if meta.is_file() {
+            let bytes = fs::read(&path).unwrap();
+            assert!(
+                !bytes.windows(text.len()).any(|w| w == text.as_bytes()),
+                "{text} is in {}",
+                path.display()
+            );
+        }
+    }
+}
+
 fn assert_no_copy(host: &Host) {
     assert!(!host.root().join("controls/github.com").exists());
 }
@@ -268,6 +391,7 @@ fn up_creates_and_fetches_the_control_copy_silently() {
     );
     let url = "https://github.com/me/control.git";
     assert_passes(&host.up(&[url, "--identity", "me"]));
+    assert_eq!(host.requests(), ["token me control\n"]);
     let copy = host.copy("me", "control");
     assert_eq!(
         host.inspect(&copy, &["rev-parse", "--is-bare-repository"]),
@@ -284,7 +408,7 @@ fn up_creates_and_fetches_the_control_copy_silently() {
 #[test]
 fn urls_differing_only_in_case_and_form_share_one_copy_and_keep_the_url_as_given() {
     let host = Host::new("case");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     std::os::unix::fs::symlink(host.origins().join("me"), host.origins().join("Me")).unwrap();
     std::os::unix::fs::symlink(
         host.origins().join("me/control.git"),
@@ -307,10 +431,19 @@ fn urls_differing_only_in_case_and_form_share_one_copy_and_keep_the_url_as_given
 }
 
 #[test]
-fn a_failing_set_head_does_not_stop_up() {
+fn an_origin_head_naming_no_branch_stops_up_naming_the_branches_with_workspace_yaml() {
     let host = Host::new("set_head_fails");
-    host.origin_with_head("me/control.git", "main", "develop", &[]);
-    assert_passes(&host.up(&["https://github.com/me/control.git", "--identity", "me"]));
+    let origin = host.origin_with_head(
+        "me/control.git",
+        "main",
+        "develop",
+        &[("workspace.yaml", WORKSPACE_YAML)],
+    );
+    host.push(&origin, "other", &host.work(&[("README", "")]));
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: origin/HEAD of the control \"https://github.com/me/control.git\" does not lead to a commit, so workspace.yaml cannot be read from the default branch, but the branches \"develop\" have it; merge the pull request that brings it to the default branch\n",
+    );
     let copy = host.copy("me", "control");
     assert!(copy.join("refs/remotes/origin/develop").exists());
     assert!(!copy.join("refs/remotes/origin/HEAD").exists());
@@ -319,7 +452,7 @@ fn a_failing_set_head_does_not_stop_up() {
 #[test]
 fn a_failing_git_command_names_the_copy_and_leaves_it_for_the_next_up_to_replace() {
     let host = Host::new("git_fails");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     host.install(
         "git",
         &format!(
@@ -350,7 +483,7 @@ fn a_failing_git_command_names_the_copy_and_leaves_it_for_the_next_up_to_replace
 #[test]
 fn an_old_copy_is_replaced() {
     let host = Host::new("replace");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let copy = host.copy("me", "control");
     fs::create_dir_all(copy.join("stale/deep")).unwrap();
     fs::write(copy.join("stale/deep/file"), "").unwrap();
@@ -395,7 +528,7 @@ fn a_symlink_or_a_file_above_the_copy_position_stops_up() {
 #[test]
 fn a_symlink_or_a_file_at_the_copy_position_stops_up() {
     let host = Host::new("copy_position");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let copy = host.copy("me", "control");
     fs::create_dir_all(copy.parent().unwrap()).unwrap();
     fs::create_dir_all(host.dir.join("elsewhere")).unwrap();
@@ -424,7 +557,7 @@ fn a_symlink_or_a_file_at_the_copy_position_stops_up() {
 #[test]
 fn git_variables_in_the_environment_of_wd_do_not_reach_git() {
     let host = Host::new("git_env");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let out = host
         .command(&["https://github.com/me/control.git", "--identity", "me"])
         .env("GIT_DIR", "/nonexistent")
@@ -436,6 +569,49 @@ fn git_variables_in_the_environment_of_wd_do_not_reach_git() {
         .output()
         .unwrap();
     assert_passes(&out);
+}
+
+#[test]
+fn git_variables_in_the_environment_of_wd_do_not_reach_git_for_a_github_app_identity() {
+    let host = Host::new("git_env_app");
+    host.origin(
+        "me/control.git",
+        "develop",
+        &[("workspace.yaml", WORKSPACE_YAML)],
+    );
+    host.log_git();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "bot"])
+        .env("GIT_DIR", "/nonexistent")
+        .env(
+            "GIT_CONFIG_PARAMETERS",
+            "'url.https://invalid.example/.insteadof'='https://github.com/'",
+        )
+        .output()
+        .unwrap();
+    assert_passes(&out);
+    for call in host.git_calls() {
+        assert!(
+            !call.contains("GIT_DIR=") && !call.contains("GIT_CONFIG_PARAMETERS="),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn an_unreachable_control_does_not_show_the_token_of_a_github_app_identity() {
+    let host = Host::new("unreachable_app");
+    host.log_git();
+    let out = host.up(&["https://github.com/me/missing.git", "--identity", "bot"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = stderr(&out);
+    assert!(
+        err.starts_with(
+            "wd: error: cannot reach the control \"https://github.com/me/missing.git\""
+        ),
+        "{err}"
+    );
+    assert!(!err.contains(TOKEN), "{err}");
 }
 
 #[test]
@@ -462,7 +638,7 @@ fn an_unreachable_control_stops_up_and_leaves_the_copy() {
 #[test]
 fn without_identity_up_stops_before_creating_the_copy() {
     let host = Host::new("no_identity");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     assert_fails(
         &host.up(&["https://github.com/me/control.git"]),
         "wd: error: wd up \"https://github.com/me/control.git\" brings up a new workspace, so it needs --identity <key>; choose a key under `identities` in ~/.config/wd/identities.yaml\n",
@@ -547,7 +723,7 @@ fn arguments_up_does_not_accept_are_refused() {
 #[test]
 fn the_root_comes_from_wd_root_before_config_yaml() {
     let host = Host::new("root_order");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let config = host.home().join(".config/wd");
     fs::create_dir_all(&config).unwrap();
     fs::write(config.join("config.yaml"), "root: /nonexistent/root\n").unwrap();
@@ -693,12 +869,121 @@ fn without_git_up_says_to_install_it() {
     let err = stderr(&out);
     assert!(err.starts_with("wd: error: cannot run git: "), "{err}");
     assert!(err.ends_with("; install git 2.32 or newer\n"), "{err}");
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_missing_git_is_reported_with_the_other_missing_items() {
+    let host = Host::new("no_git_and_docker");
+    for tool in ["git", "docker"] {
+        fs::remove_file(host.fakebin().join(tool)).unwrap();
+    }
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "other"]),
+        &format!(
+            "wd: error: cannot run docker: No such file or directory (os error 2); install docker
+wd: error: cannot run git: No such file or directory (os error 2); install git 2.32 or newer
+wd: error: {}: line 2, column 3: the identity \"other\" is not in the ledger; the keys present are \"me\", \"bot\"; pick one of them with --identity, or add an entry with that key under `identities`
+",
+            host.ledger().display()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_git_older_than_2_32_stops_up_before_creating_the_copy_for_every_identity() {
+    for identity in ["me", "bot"] {
+        let host = Host::new(&format!("old_git_{identity}"));
+        host.git_version("git version 2.31.1");
+        assert_fails(
+            &host.up(&["https://github.com/me/control.git", "--identity", identity]),
+            "wd: error: git --version printed \"git version 2.31.1\", which is older than 2.32; install git 2.32 or newer\n",
+        );
+        assert_eq!(host.requests().len(), 1);
+        assert_no_copy(&host);
+    }
+}
+
+#[test]
+fn an_old_git_is_reported_together_with_the_other_missing_items_in_order() {
+    let host = Host::new("old_git_and_linger");
+    host.git_version("git version 2.20.1 (Apple Git-117)");
+    fs::remove_file(host.fakebin().join("docker")).unwrap();
+    host.linger("no");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: cannot run docker: No such file or directory (os error 2); install docker
+wd: error: git --version printed \"git version 2.20.1 (Apple Git-117)\", which is older than 2.32; install git 2.32 or newer
+wd: error: Linger is not enabled for user {}; run loginctl enable-linger
+",
+            uid()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_git_version_wd_cannot_read_stops_up_naming_the_output() {
+    let host = Host::new("garbled_git");
+    host.git_version("git version unknown");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: cannot read the version of git: git --version printed \"git version unknown\"; install git 2.32 or newer\n",
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_failing_git_version_is_named_with_its_status() {
+    let host = Host::new("failing_git");
+    host.install("git", "#!/bin/sh\necho 'git: broken' >&2\nexit 3\n");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: cannot run git: git --version failed with exit status: 3: git: broken; check the installation of git, which must be 2.32 or newer\n",
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn git_2_32_and_newer_pass_with_any_suffix() {
+    for (index, line) in [
+        "git version 2.32.0",
+        "git version 2.32.0.rc1",
+        "git version 2.43.0.windows.1",
+        "git version 3.0.0",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let host = Host::new(&format!("new_git_{index}"));
+        host.control();
+        host.git_version(line);
+        assert_passes(&host.up(&["https://github.com/me/control.git", "--identity", "me"]));
+    }
+}
+
+#[test]
+fn git_variables_in_the_environment_of_wd_do_not_reach_the_git_version_check() {
+    let host = Host::new("git_env_version");
+    host.control();
+    host.log_git();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "me"])
+        .env("GIT_DIR", "/nonexistent")
+        .output()
+        .unwrap();
+    assert_passes(&out);
+    let calls = host.all_git_calls();
+    assert!(calls[0].starts_with("--version\n"), "{calls:?}");
+    assert!(!calls[0].contains("GIT_"), "{}", calls[0]);
 }
 
 #[test]
 fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
     let host = Host::new("github_app");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     // If ~/.gitconfig were read, its longer prefix would win over the logging git's.
     fs::write(
         host.home().join(".gitconfig"),
@@ -714,34 +999,75 @@ fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
         .output()
         .unwrap();
     assert_passes(&out);
+    assert_eq!(host.requests(), ["token bot control\n"]);
     let calls = host.git_calls();
-    assert_eq!(calls.len(), 4, "{calls:?}");
+    assert_eq!(calls.len(), 8, "{calls:?}");
     for call in &calls {
         for line in [
             "GIT_CONFIG_GLOBAL=/dev/null",
             "GIT_TERMINAL_PROMPT=0",
             "GIT_ASKPASS=",
+            "GIT_CONFIG_COUNT=3",
             "GIT_CONFIG_KEY_0=credential.helper",
             "GIT_CONFIG_VALUE_0=",
+            "GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf",
+            "GIT_CONFIG_VALUE_2=git@github.com:",
             "stdin: none",
         ] {
             assert!(call.lines().any(|l| l == line), "{line} in {call}");
         }
     }
+    for call in &calls {
+        let argv = call.lines().next().unwrap();
+        assert!(!argv.contains(TOKEN), "{argv}");
+    }
+    let token_line = format!("WD_CONTROL_TOKEN={TOKEN}");
+    let has_token: Vec<bool> = calls
+        .iter()
+        .map(|call| call.lines().any(|l| l == token_line))
+        .collect();
+    assert_eq!(
+        has_token,
+        [false, false, true, true, false, false, false, false]
+    );
+    let copy = host.copy("me", "control");
     assert!(
         calls[2].starts_with(&format!(
             "--git-dir={} fetch --prune origin\n",
-            host.copy("me", "control").display()
+            copy.display()
         )),
         "{}",
         calls[2]
     );
+    assert!(
+        calls[2].contains(&format!(
+            "protocol=https\nhost=github.com\nusername=x-access-token\npassword={TOKEN}\n"
+        )),
+        "{}",
+        calls[2]
+    );
+    assert_eq!(
+        calls[2]
+            .lines()
+            .filter(|l| l.starts_with("password="))
+            .count(),
+        1,
+        "{}",
+        calls[2]
+    );
+    assert_eq!(
+        host.inspect(&copy, &["config", "remote.origin.url"]),
+        "https://github.com/me/control.git"
+    );
+    for dir in [host.root(), host.home()] {
+        assert_no_file_contains(&dir, TOKEN);
+    }
 }
 
 #[test]
 fn a_github_user_identity_lets_git_read_the_terminal() {
     let host = Host::new("user_stdin");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     host.log_git();
     let input = host.dir.join("input");
     fs::write(&input, "typed\n").unwrap();
@@ -762,7 +1088,7 @@ fn a_github_user_identity_lets_git_read_the_terminal() {
 #[test]
 fn an_identity_missing_from_the_ledger_stops_up_before_creating_the_copy() {
     let host = Host::new("ledger_key");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     assert_fails(
         &host.up(&["https://github.com/me/control.git", "--identity", "other"]),
         &format!(
@@ -794,6 +1120,7 @@ fn a_missing_or_symlinked_ledger_stops_up_before_creating_the_copy() {
             host.ledger().display()
         ),
     );
+    assert!(host.requests().is_empty());
     assert_no_copy(&host);
 }
 
@@ -819,13 +1146,14 @@ fn every_problem_of_the_selected_entry_is_reported_by_line_and_column() {
         .map(|line| format!("wd: error: {}: {line}\n", ledger.display()))
         .collect::<String>(),
     );
+    assert!(host.requests().is_empty());
     assert_no_copy(&host);
 }
 
 #[test]
 fn entries_other_than_the_selected_one_are_checked_only_for_their_value_types() {
     let host = Host::new("ledger_others");
-    host.origin("me/control.git", "develop", &[]);
+    host.control();
     let url = "https://github.com/me/control.git";
     fs::write(
         host.ledger(),
@@ -845,4 +1173,303 @@ fn entries_other_than_the_selected_one_are_checked_only_for_their_value_types() 
             host.ledger().display()
         ),
     );
+}
+
+#[test]
+fn a_github_user_identity_also_tries_issuing_a_token_for_the_repo_as_written() {
+    let host = Host::new("trial_user");
+    host.answer("err identity is not github-app type: me\n");
+    let socket = host.runtime_dir().join("wd/token.sock");
+    assert_fails(
+        &host.up(&["https://github.com/Me/Control.GIT", "--identity", "me"]),
+        &format!(
+            "wd: error: the token socket \"{}\" did not issue a token for \"me\" and the repo \"Control\": the issuer answered: identity is not github-app type: me; check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock\n",
+            socket.display()
+        ),
+    );
+    assert_eq!(host.requests(), ["token me Control\n"]);
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_the_token_socket_up_stops_before_creating_the_copy() {
+    let host = Host::new("no_socket");
+    let runtime_dir = host.dir.join("other-run");
+    fs::create_dir_all(&runtime_dir).unwrap();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "bot"])
+        .env("XDG_RUNTIME_DIR", &runtime_dir)
+        .output()
+        .unwrap();
+    assert_fails(
+        &out,
+        &format!(
+            "wd: error: the token socket \"{}/wd/token.sock\" did not issue a token for \"bot\" and the repo \"control\": cannot connect: No such file or directory (os error 2); check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock\n",
+            runtime_dir.display()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn an_identity_missing_from_the_ledger_is_not_tried_on_the_token_socket() {
+    let host = Host::new("trial_skipped");
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "other"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stderr(&out).lines().count(), 1, "{}", stderr(&out));
+    assert!(host.requests().is_empty());
+}
+
+#[test]
+fn every_missing_precheck_is_reported_in_order_before_creating_the_copy() {
+    let host = Host::new("prechecks");
+    for tool in ["devcontainer", "docker"] {
+        fs::remove_file(host.fakebin().join(tool)).unwrap();
+    }
+    host.linger("no");
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "other"]);
+    assert_fails(
+        &out,
+        &format!(
+            "wd: error: cannot run devcontainer: No such file or directory (os error 2); install the devcontainer CLI
+wd: error: cannot run docker: No such file or directory (os error 2); install docker
+wd: error: {}: line 2, column 3: the identity \"other\" is not in the ledger; the keys present are \"me\", \"bot\"; pick one of them with --identity, or add an entry with that key under `identities`
+wd: error: Linger is not enabled for user {}; run loginctl enable-linger
+",
+            host.ledger().display(),
+            uid()
+        ),
+    );
+    assert!(host.requests().is_empty());
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_failing_tool_or_loginctl_is_named_with_its_status() {
+    let host = Host::new("tools_fail");
+    host.install("docker", "#!/bin/sh\necho 'docker: broken' >&2\nexit 4\n");
+    host.install(
+        "loginctl",
+        "#!/bin/sh\necho 'Failed to get user: not logged in or lingering' >&2\nexit 1\n",
+    );
+    host.answer("err issuer down\n");
+    let socket = host.runtime_dir().join("wd/token.sock");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: cannot run docker: docker --version failed with exit status: 4: docker: broken; check the installation of docker
+wd: error: the token socket \"{}\" did not issue a token for \"me\" and the repo \"control\": the issuer answered: issuer down; check that service/install was run and the issuer is running, the permissions of the PEM file and the host clock
+wd: error: cannot check Linger for user {}: loginctl show-user failed with exit status: 1: Failed to get user: not logged in or lingering; run loginctl enable-linger
+",
+            socket.display(),
+            uid()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_loginctl_up_says_to_install_it() {
+    let host = Host::new("no_loginctl");
+    fs::remove_file(host.fakebin().join("loginctl")).unwrap();
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: cannot check Linger: cannot run loginctl: No such file or directory (os error 2); install systemd's loginctl, then run loginctl enable-linger\n",
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn without_linger_alone_up_stops_before_creating_the_copy() {
+    let host = Host::new("linger");
+    host.linger("no");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: Linger is not enabled for user {}; run loginctl enable-linger\n",
+            uid()
+        ),
+    );
+    assert_eq!(host.requests(), ["token me control\n"]);
+    assert_no_copy(&host);
+}
+
+#[test]
+fn up_follows_the_default_branch_of_origin_after_it_is_renamed() {
+    let host = Host::new("renamed");
+    let origin = host.control();
+    let url = "https://github.com/me/control.git";
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+
+    host.push(
+        &origin,
+        "main",
+        &host.work(&[("workspace.yaml", WORKSPACE_YAML)]),
+    );
+    host.push(
+        &origin,
+        "develop",
+        &host.work(&[("workspace.yaml", "name: x\n")]),
+    );
+    host.setup_git(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+    let copy = host.copy("me", "control");
+    assert_eq!(
+        host.inspect(&copy, &["symbolic-ref", "refs/remotes/origin/HEAD"]),
+        "refs/remotes/origin/main"
+    );
+
+    host.setup_git(&origin, &["update-ref", "-d", "refs/heads/develop"]);
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+    assert!(!copy.join("refs/remotes/origin/develop").exists());
+}
+
+#[test]
+fn an_empty_origin_stops_up() {
+    let host = Host::new("origin_empty");
+    let origin = host.origins().join("me/control.git");
+    fs::create_dir_all(&origin).unwrap();
+    host.setup_git(&origin, &["init", "-q", "--bare"]);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: origin of the control \"https://github.com/me/control.git\" has no branches; in your clone of the control, write workspace.yaml with wd set, then commit and push it\n",
+    );
+}
+
+#[test]
+fn workspace_yaml_only_on_another_branch_asks_to_merge_it() {
+    let host = Host::new("on_branch");
+    let origin = host.origin("me/control.git", "develop", &[("README", "")]);
+    let url = "https://github.com/me/control.git";
+    let missing = "wd: error: workspace.yaml is not at origin/HEAD of the control \"https://github.com/me/control.git\"";
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "{missing}, and no branch has it; in your clone of the control, write workspace.yaml with wd set, then commit and push it to the default branch\n"
+        ),
+    );
+    host.push(
+        &origin,
+        "add-workspace",
+        &host.work(&[("workspace.yaml", WORKSPACE_YAML)]),
+    );
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "{missing}, but the branches \"add-workspace\" have it; merge the pull request that brings it to the default branch\n"
+        ),
+    );
+}
+
+#[test]
+fn a_workspace_yaml_that_is_not_a_regular_file_shows_its_mode() {
+    let host = Host::new("mode");
+    let origin = host.origins().join("me/control.git");
+    fs::create_dir_all(&origin).unwrap();
+    host.setup_git(&origin, &["init", "-q", "--bare", "-b", "develop"]);
+    let work = host.work(&[("workspace.yaml", WORKSPACE_YAML)]);
+    host.setup_git(&work, &["update-index", "--chmod=+x", "workspace.yaml"]);
+    host.push(&origin, "develop", &work);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: workspace.yaml at origin/HEAD of the control \"https://github.com/me/control.git\" does not pass validate, since it is not a regular file but has the mode 100755; in your clone of the control, make it a regular file that is not executable, then commit and push it\n",
+    );
+}
+
+#[test]
+fn an_invalid_workspace_yaml_shows_the_problems_that_validate_shows() {
+    let host = Host::new("invalid");
+    let text = WORKSPACE_YAML
+        .replace("name: demo", "name: Demo")
+        .replace("agent: claude\n", "");
+    host.origin("me/control.git", "develop", &[("workspace.yaml", &text)]);
+    let prefix = "wd: error: workspace.yaml at origin/HEAD of the control \"https://github.com/me/control.git\": ";
+    let fix =
+        "wd: error: fix workspace.yaml in your clone of the control, then commit and push it\n";
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "me"]);
+    fs::write(host.dir.join("workspace.yaml"), &text).unwrap();
+    let validate = Command::new(env!("CARGO_BIN_EXE_wd"))
+        .args([
+            "validate",
+            host.dir.join("workspace.yaml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let problems: String = stderr(&validate)
+        .lines()
+        .map(|line| {
+            let (_, problem) = line.split_once(".yaml: ").unwrap();
+            format!("{prefix}{problem}\n")
+        })
+        .collect();
+    assert_eq!(problems.lines().count(), 2, "{problems}");
+    assert_fails(&out, &format!("{problems}{fix}"));
+
+    host.push(
+        &host.origins().join("me/control.git"),
+        "develop",
+        &host.work(&[("workspace.yaml", "name: [\n")]),
+    );
+    let out = host.up(&["https://github.com/me/control.git", "--identity", "me"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).starts_with(&format!("{prefix}line ")),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).ends_with(fix), "{}", stderr(&out));
+}
+
+#[test]
+fn a_workspace_yaml_over_the_size_limit_is_not_read() {
+    let host = Host::new("too_large");
+    let text = format!("{WORKSPACE_YAML}#{}\n", "x".repeat(1 << 20));
+    host.origin("me/control.git", "develop", &[("workspace.yaml", &text)]);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: workspace.yaml at origin/HEAD of the control \"https://github.com/me/control.git\": the file is {} bytes, over the limit of 1048576 bytes (1 MiB)\nwd: error: fix workspace.yaml in your clone of the control, then commit and push it\n",
+            text.len()
+        ),
+    );
+}
+
+#[test]
+fn a_control_that_names_another_repo_shows_both_identifiers() {
+    let host = Host::new("mismatch");
+    host.origin(
+        "me/other.git",
+        "develop",
+        &[("workspace.yaml", WORKSPACE_YAML)],
+    );
+    assert_fails(
+        &host.up(&["https://github.com/me/other.git", "--identity", "me"]),
+        "wd: error: `control` of workspace.yaml at origin/HEAD of \"https://github.com/me/other.git\" names \"control\", whose url \"https://github.com/me/control.git\" gives the identifier \"github.com/me/control\", but the URL given to wd up gives \"github.com/me/other\"; fix `control` or that url in your clone of the control, or give wd up the URL of the control\n",
+    );
+}
+
+#[test]
+fn without_home_the_ledger_is_one_of_the_missing_prechecks() {
+    let host = Host::new("no_home");
+    for tool in ["devcontainer", "docker"] {
+        fs::remove_file(host.fakebin().join(tool)).unwrap();
+    }
+    host.linger("no");
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "me"])
+        .env_remove("HOME")
+        .output()
+        .unwrap();
+    let lines: Vec<String> = stderr(&out).lines().map(str::to_owned).collect();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    assert_eq!(
+        lines[2],
+        "wd: error: HOME is not set to an absolute path, so wd cannot find ~/.config/wd; set HOME"
+    );
+    assert!(
+        lines[3].starts_with("wd: error: Linger is not enabled"),
+        "{lines:?}"
+    );
+    assert!(host.requests().is_empty());
 }

@@ -107,6 +107,33 @@ pub enum Error {
         url: String,
         stderr: Vec<u8>,
     },
+    OriginEmpty {
+        url: String,
+    },
+    NoWorkspaceYaml {
+        url: String,
+        /// Whether origin/HEAD led to a commit.
+        head_resolved: bool,
+        /// The branches of origin that have workspace.yaml.
+        branches: Vec<String>,
+    },
+    WorkspaceYamlMode {
+        url: String,
+        mode: String,
+    },
+    /// workspace.yaml of the control does not pass validate. One line per problem.
+    ControlWorkspace {
+        url: String,
+        problems: Vec<yaml::Error>,
+    },
+    /// The `url` that `control` names is not the control that wd up was given.
+    ControlMismatch {
+        url: String,
+        url_id: String,
+        control: String,
+        control_url: String,
+        control_id: String,
+    },
 }
 
 impl Error {
@@ -328,6 +355,77 @@ impl fmt::Display for Error {
                 )?;
                 git_lines(f, stderr)
             }
+            Error::OriginEmpty { url } => write!(
+                f,
+                "origin of the control {} has no branches; in your clone of the control, write workspace.yaml with wd set, then commit and push it",
+                quote(url)
+            ),
+            Error::NoWorkspaceYaml {
+                url,
+                head_resolved,
+                branches,
+            } => {
+                if *head_resolved {
+                    write!(
+                        f,
+                        "workspace.yaml is not at origin/HEAD of the control {}",
+                        quote(url)
+                    )?;
+                } else {
+                    write!(
+                        f,
+                        "origin/HEAD of the control {} does not lead to a commit, so workspace.yaml cannot be read from the default branch",
+                        quote(url)
+                    )?;
+                }
+                if branches.is_empty() {
+                    write!(
+                        f,
+                        ", and no branch has it; in your clone of the control, write workspace.yaml with wd set, then commit and push it to the default branch"
+                    )
+                } else {
+                    let names: Vec<String> = branches.iter().map(|b| quote(b)).collect();
+                    write!(
+                        f,
+                        ", but the branches {} have it; merge the pull request that brings it to the default branch",
+                        names.join(", ")
+                    )
+                }
+            }
+            Error::WorkspaceYamlMode { url, mode } => write!(
+                f,
+                "workspace.yaml at origin/HEAD of the control {} does not pass validate, since it is not a regular file but has the mode {}; in your clone of the control, make it a regular file that is not executable, then commit and push it",
+                quote(url),
+                escape(mode)
+            ),
+            Error::ControlWorkspace { url, problems } => {
+                for problem in problems {
+                    writeln!(
+                        f,
+                        "workspace.yaml at origin/HEAD of the control {}: {problem}",
+                        quote(url)
+                    )?;
+                }
+                write!(
+                    f,
+                    "fix workspace.yaml in your clone of the control, then commit and push it"
+                )
+            }
+            Error::ControlMismatch {
+                url,
+                url_id,
+                control,
+                control_url,
+                control_id,
+            } => write!(
+                f,
+                "`control` of workspace.yaml at origin/HEAD of {} names {}, whose url {} gives the identifier {}, but the URL given to wd up gives {}; fix `control` or that url in your clone of the control, or give wd up the URL of the control",
+                quote(url),
+                quote(control),
+                quote(control_url),
+                quote(control_id),
+                quote(url_id)
+            ),
         }
     }
 }

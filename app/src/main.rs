@@ -10,6 +10,7 @@ mod output;
 mod process;
 mod repo_url;
 mod root;
+mod token;
 mod workspace;
 mod yaml;
 
