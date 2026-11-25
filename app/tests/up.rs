@@ -175,14 +175,32 @@ impl Host {
         );
     }
 
+    /// Puts a git on PATH that prints `line` for --version and runs the real git otherwise.
+    fn git_version(&self, line: &str) {
+        self.install(
+            "git",
+            &format!(
+                "#!/bin/sh\ntest \"$*\" = --version && {{ echo '{line}'; exit 0; }}\nexec {} \"$@\"\n",
+                real_git().display()
+            ),
+        );
+    }
+
     /// The calls that `log_git` logged, one string per call.
-    fn git_calls(&self) -> Vec<String> {
+    fn all_git_calls(&self) -> Vec<String> {
         fs::read_to_string(self.git_log())
             .unwrap()
             .split("argv: ")
             .skip(1)
             .map(str::to_owned)
             .collect()
+    }
+
+    /// Like `all_git_calls`, without the version check of the prechecks.
+    fn git_calls(&self) -> Vec<String> {
+        let mut calls = self.all_git_calls();
+        calls.retain(|call| !call.starts_with("--version\n"));
+        calls
     }
 
     fn root(&self) -> PathBuf {
@@ -851,6 +869,115 @@ fn without_git_up_says_to_install_it() {
     let err = stderr(&out);
     assert!(err.starts_with("wd: error: cannot run git: "), "{err}");
     assert!(err.ends_with("; install git 2.32 or newer\n"), "{err}");
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_missing_git_is_reported_with_the_other_missing_items() {
+    let host = Host::new("no_git_and_docker");
+    for tool in ["git", "docker"] {
+        fs::remove_file(host.fakebin().join(tool)).unwrap();
+    }
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "other"]),
+        &format!(
+            "wd: error: cannot run docker: No such file or directory (os error 2); install docker
+wd: error: cannot run git: No such file or directory (os error 2); install git 2.32 or newer
+wd: error: {}: line 2, column 3: the identity \"other\" is not in the ledger; the keys present are \"me\", \"bot\"; pick one of them with --identity, or add an entry with that key under `identities`
+",
+            host.ledger().display()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_git_older_than_2_32_stops_up_before_creating_the_copy_for_every_identity() {
+    for identity in ["me", "bot"] {
+        let host = Host::new(&format!("old_git_{identity}"));
+        host.git_version("git version 2.31.1");
+        assert_fails(
+            &host.up(&["https://github.com/me/control.git", "--identity", identity]),
+            "wd: error: git --version printed \"git version 2.31.1\", which is older than 2.32; install git 2.32 or newer\n",
+        );
+        assert_eq!(host.requests().len(), 1);
+        assert_no_copy(&host);
+    }
+}
+
+#[test]
+fn an_old_git_is_reported_together_with_the_other_missing_items_in_order() {
+    let host = Host::new("old_git_and_linger");
+    host.git_version("git version 2.20.1 (Apple Git-117)");
+    fs::remove_file(host.fakebin().join("docker")).unwrap();
+    host.linger("no");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        &format!(
+            "wd: error: cannot run docker: No such file or directory (os error 2); install docker
+wd: error: git --version printed \"git version 2.20.1 (Apple Git-117)\", which is older than 2.32; install git 2.32 or newer
+wd: error: Linger is not enabled for user {}; run loginctl enable-linger
+",
+            uid()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_git_version_wd_cannot_read_stops_up_naming_the_output() {
+    let host = Host::new("garbled_git");
+    host.git_version("git version unknown");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: cannot read the version of git: git --version printed \"git version unknown\"; install git 2.32 or newer\n",
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_failing_git_version_is_named_with_its_status() {
+    let host = Host::new("failing_git");
+    host.install("git", "#!/bin/sh\necho 'git: broken' >&2\nexit 3\n");
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "me"]),
+        "wd: error: cannot run git: git --version failed with exit status: 3: git: broken; check the installation of git, which must be 2.32 or newer\n",
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn git_2_32_and_newer_pass_with_any_suffix() {
+    for (index, line) in [
+        "git version 2.32.0",
+        "git version 2.32.0.rc1",
+        "git version 2.43.0.windows.1",
+        "git version 3.0.0",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let host = Host::new(&format!("new_git_{index}"));
+        host.control();
+        host.git_version(line);
+        assert_passes(&host.up(&["https://github.com/me/control.git", "--identity", "me"]));
+    }
+}
+
+#[test]
+fn git_variables_in_the_environment_of_wd_do_not_reach_the_git_version_check() {
+    let host = Host::new("git_env_version");
+    host.control();
+    host.log_git();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "me"])
+        .env("GIT_DIR", "/nonexistent")
+        .output()
+        .unwrap();
+    assert_passes(&out);
+    let calls = host.all_git_calls();
+    assert!(calls[0].starts_with("--version\n"), "{calls:?}");
+    assert!(!calls[0].contains("GIT_"), "{}", calls[0]);
 }
 
 #[test]
