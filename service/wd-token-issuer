@@ -5,7 +5,7 @@
 # Request (one line):  token <identity> [repo...]
 # Response (one line): ok <installation token> <expires_at> | err <reason>
 #
-# The identity is an app-type entry in the identity registry (identities.yaml).
+# The identity is a github-app-type entry in the identity registry (identities.yaml).
 # Passing repository names restricts the token to that set.
 
 set -euf
@@ -69,7 +69,11 @@ done
 
 type="$(get "$name" type)"
 [ -n "$type" ] || err "identity not in registry: $name"
-[ "$type" = "app" ] || err "identity is not app type: $name"
+# app is the former name of github-app, still used by ledgers that the shell tools read
+case "$type" in
+app | github-app) ;;
+*) err "identity is not github-app type: $name" ;;
+esac
 app_id="$(get "$name" app_id)"
 inst="$(get "$name" installation_id)"
 pem="$(get "$name" pem)"
