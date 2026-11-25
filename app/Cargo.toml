@@ -1,0 +1,27 @@
+[package]
+name = "wd"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+lexopt = "=0.3.2"
+saphyr-parser = "=0.3.4"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+let_underscore_must_use = "warn"
+unused_result_ok = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+dbg_macro = "warn"
+mod_module_files = "warn"

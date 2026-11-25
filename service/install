@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+# Install the token issuing service on the host: the issuer into libexec, the units into systemd user.
+
+set -eu
+
+here="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+install -D -m 755 "$here/wd-token-issuer" "$HOME/.local/libexec/wd/wd-token-issuer"
+install -D -m 644 "$here/wd-token.socket" "$HOME/.config/systemd/user/wd-token.socket"
+install -D -m 644 "$here/wd-token@.service" "$HOME/.config/systemd/user/wd-token@.service"
+systemctl --user daemon-reload
+systemctl --user enable --now wd-token.socket
+echo "Installed: ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/wd/token.sock"

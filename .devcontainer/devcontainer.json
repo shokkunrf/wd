@@ -3,5 +3,13 @@
     "context": ".",
     "dockerfile": "Dockerfile"
   },
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "1.99.1",
+      "profile": "minimal",
+      "targets": "x86_64-unknown-linux-musl",
+      "components": "rustfmt,clippy"
+    }
+  },
   "remoteUser": "developer"
 }
