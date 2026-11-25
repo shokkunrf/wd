@@ -72,10 +72,14 @@ CIで検査しないものは、レビューで見る。
 
 - `src/main.rs` — 引数の解析とコマンドのdispatch
 - `src/commands.rs` — サブコマンドのモジュールの宣言。各コマンドは`src/commands/`に置く
+- `src/commands/init.rs` — `init`サブコマンド。名義台帳の雛形を持つ
 - `src/commands/validate.rs` — `validate`サブコマンド
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
-- `src/fs.rs` — ファイルを読むラッパー
+- `src/fs.rs` — ファイルシステムへの操作のラッパー
+- `src/location.rs` — コマンドが動いてよい場所の検査。`WD_WORKSPACE`の有無で判定する
+- `src/config.rs` — `~/.config/wd/`の場所と、`config.yaml`の`root:`の読み書き
+- `src/root.rs` — rootの検査。絶対パスで、文字列のままのパスとrealpathの祖先に`.git`が無いこと
 - `src/yaml.rs` — YAMLの共通の読み取り。1文書を、所有する木に読む
 - `src/name.rs` — 正準形の名前の検査
 - `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子

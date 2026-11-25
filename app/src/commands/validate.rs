@@ -3,11 +3,14 @@
 use std::path::PathBuf;
 
 use crate::error::Error;
-use crate::fs::{self, ReadError};
+use crate::fs;
+use crate::location::Runs;
 use crate::workspace::{self, Failure};
 use crate::yaml;
 
 const DEFAULT_PATH: &str = "workspace.yaml";
+
+pub const RUNS: Runs = Runs::Anywhere;
 
 /// `parser` has consumed the command name.
 pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {
@@ -22,21 +25,8 @@ pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {
     }
     let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_PATH));
 
-    let bytes = match fs::read_limited(&path, yaml::MAX_BYTES as u64) {
-        Ok(bytes) => bytes,
-        Err(ReadError::TooLarge(size)) => {
-            return Err(Error::Yaml {
-                path,
-                error: yaml::Error::too_large(size),
-            });
-        }
-        Err(err) => {
-            return Err(Error::Unreadable {
-                path,
-                reason: err.to_string(),
-            });
-        }
-    };
+    let bytes =
+        fs::read_limited(&path, yaml::MAX_BYTES as u64).map_err(|err| Error::read(&path, err))?;
     let root = match yaml::parse(&bytes) {
         Ok(root) => root,
         Err(error) => return Err(Error::Yaml { path, error }),

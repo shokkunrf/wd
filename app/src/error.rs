@@ -1,9 +1,11 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::output::escape;
+use crate::fs::{DirError, ReadError, WriteError};
+use crate::output::{escape, quote};
+use crate::root;
 use crate::yaml;
 
 #[derive(Debug)]
@@ -27,10 +29,103 @@ pub enum Error {
         path: PathBuf,
         problems: Vec<yaml::Error>,
     },
+    WrongPlace {
+        command: &'static str,
+    },
+    Repeated {
+        option: &'static str,
+    },
+    NotUtf8 {
+        what: &'static str,
+        value: OsString,
+    },
+    MissingRootFlag,
+    RootNotAbsolute {
+        from: root::Source,
+        value: String,
+    },
+    RootControlChar {
+        from: root::Source,
+        value: String,
+    },
+    RootInGit {
+        root: PathBuf,
+        found: PathBuf,
+    },
+    Filesystem {
+        /// A verb such as "create" that reads "cannot create <path>".
+        action: &'static str,
+        path: PathBuf,
+        reason: String,
+    },
+    Symlink {
+        path: PathBuf,
+    },
+    NotDir {
+        path: PathBuf,
+    },
+    HomeUnset,
+    RootConflict {
+        config: PathBuf,
+        recorded: String,
+        given: String,
+    },
 }
 
-fn show(path: &std::path::Path) -> String {
+impl Error {
+    pub fn read(path: &Path, err: ReadError) -> Error {
+        let path = path.to_owned();
+        match err {
+            ReadError::Symlink => Error::Symlink { path },
+            ReadError::TooLarge(size) => Error::Yaml {
+                path,
+                error: yaml::Error::too_large(size),
+            },
+            err => Error::Unreadable {
+                path,
+                reason: err.to_string(),
+            },
+        }
+    }
+
+    pub fn write(path: &Path, err: WriteError) -> Error {
+        let path = path.to_owned();
+        match err {
+            WriteError::Io(err) => Error::Filesystem {
+                action: "write",
+                path,
+                reason: err.to_string(),
+            },
+            WriteError::Symlink => Error::Symlink { path },
+            WriteError::NotRegular => Error::Filesystem {
+                action: "write",
+                path,
+                reason: "something other than a regular file is there".to_owned(),
+            },
+        }
+    }
+
+    /// `action` is the verb of the operation that met `err` at `path`.
+    pub fn dir(action: &'static str, path: &Path, err: DirError) -> Error {
+        let path = path.to_owned();
+        match err {
+            DirError::Io(err) => Error::Filesystem {
+                action,
+                path,
+                reason: err.to_string(),
+            },
+            DirError::Symlink => Error::Symlink { path },
+            DirError::NotDir => Error::NotDir { path },
+        }
+    }
+}
+
+fn show(path: &Path) -> String {
     escape(&path.to_string_lossy())
+}
+
+fn quote_path(path: &Path) -> String {
+    quote(&path.to_string_lossy())
 }
 
 impl fmt::Display for Error {
@@ -53,6 +148,69 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
+            Error::WrongPlace { command } => write!(
+                f,
+                "`wd {command}` runs only on the host, but WD_WORKSPACE is set, which marks the inside of a container; run it on the host, or unset WD_WORKSPACE if this is the host"
+            ),
+            Error::Repeated { option } => {
+                write!(f, "{option} is given more than once; give it once")
+            }
+            Error::NotUtf8 { what, value } => write!(
+                f,
+                "{what} {} is not valid UTF-8",
+                quote(&value.to_string_lossy())
+            ),
+            Error::MissingRootFlag => write!(
+                f,
+                "wd init needs --root <dir>; give the absolute path of the directory where wd keeps controls/ and workspaces/"
+            ),
+            Error::RootNotAbsolute { from, value } => write!(
+                f,
+                "the root {} from {from} is not an absolute path; give a path that starts with \"/\"",
+                quote(value)
+            ),
+            Error::RootControlChar { from, value } => write!(
+                f,
+                "the root {} from {from} has a control character; choose a path without one",
+                quote(value)
+            ),
+            Error::RootInGit { root, found } => write!(
+                f,
+                "the root {} is inside a git working tree, since {} exists; remove that .git or choose a root outside any git working tree",
+                quote_path(root),
+                quote_path(found)
+            ),
+            Error::Filesystem {
+                action,
+                path,
+                reason,
+            } => write!(f, "cannot {action} {}: {reason}", quote_path(path)),
+            Error::Symlink { path } => write!(
+                f,
+                "{} is a symlink, which wd does not follow; check where it points and remove it by hand",
+                quote_path(path)
+            ),
+            Error::NotDir { path } => write!(
+                f,
+                "{} is not a directory; check what it is and remove it by hand",
+                quote_path(path)
+            ),
+            Error::HomeUnset => write!(
+                f,
+                "HOME is not set to an absolute path, so wd cannot find ~/.config/wd; set HOME"
+            ),
+            Error::RootConflict {
+                config,
+                recorded,
+                given,
+            } => write!(
+                f,
+                "{} records the root {}, but --root gives {}; nothing was written; to change the root, edit {} yourself",
+                quote_path(config),
+                quote(recorded),
+                quote(given),
+                quote_path(config)
+            ),
         }
     }
 }

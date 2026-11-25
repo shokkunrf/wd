@@ -20,6 +20,7 @@ allow-wildcard-paths = false
 allow-workspace = true
 allow = [
   { crate = "lexopt@=0.3.2", reason = "argument parsing" },
+  { crate = "libc@=0.2.191", reason = "constants such as O_NOFOLLOW for opening files" },
   { crate = "saphyr-parser@=0.3.4", reason = "YAML events, which are mapped to structs by hand" },
   { crate = "arraydeque@=0.5.1", reason = "dependency of saphyr-parser" },
   { crate = "thiserror@=2.0.21", reason = "dependency of saphyr-parser, not used for wd errors" },
@@ -40,6 +41,7 @@ include-dependencies = true
 executables = "deny"
 interpreted = "deny"
 allow-build-scripts = [
+  { crate = "libc@=0.2.191", reason = "probes the compiler version and the target" },
   { crate = "proc-macro2@=1.0.107", reason = "dependency of thiserror-impl, probes the compiler version" },
   { crate = "quote@=1.0.47", reason = "dependency of thiserror-impl, probes the compiler version" },
   { crate = "thiserror@=2.0.21", reason = "dependency of saphyr-parser, probes the compiler version" },

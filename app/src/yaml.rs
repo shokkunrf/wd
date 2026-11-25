@@ -205,6 +205,32 @@ pub fn parse(bytes: &[u8]) -> Result<Node, Error> {
     }))
 }
 
+/// Writes `text` as a value that reads back as the same string, in double quotes only when it has to be.
+pub fn write_scalar(text: &str) -> String {
+    let plain = parse(format!("k: {text}\n").as_bytes());
+    let reads_back = plain.is_ok_and(|root| {
+        root.as_map("the document").is_ok_and(
+            |entries| matches!(entries, [entry] if entry.value.as_str("the value") == Ok(text)),
+        )
+    });
+    if reads_back {
+        return text.to_owned();
+    }
+    let mut quoted = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' | '\\' => {
+                quoted.push('\\');
+                quoted.push(c);
+            }
+            c if c.is_control() => quoted.push_str(&format!("\\u{:04x}", u32::from(c))),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 fn utf8_error(bytes: &[u8], valid_up_to: usize) -> Error {
     let prefix = &bytes[..valid_up_to];
     let line = 1 + prefix.iter().filter(|byte| **byte == b'\n').count();
@@ -556,6 +582,52 @@ mod tests {
             .as_str("`a`")
             .unwrap()
             .to_owned()
+    }
+
+    #[test]
+    fn a_written_scalar_reads_back_as_the_same_string() {
+        for text in [
+            "/home/me/wd",
+            "/a b",
+            " /a",
+            "/a ",
+            "/a #b",
+            "/a: b",
+            "true",
+            "010",
+            "",
+            "~",
+            "\"q\"",
+            "back\\slash",
+            "-",
+            "- a",
+            "? x",
+            "[x]",
+            "{x}",
+            "&a",
+            "*a",
+            "!x",
+            "%x",
+            "@x",
+            "`x",
+            "|",
+            ">",
+            "a\tb",
+            "a\nb",
+            "\u{7f}",
+            "日本",
+        ] {
+            let written = write_scalar(text);
+            assert_eq!(string_of(&format!("a: {written}\n")), text, "{written}");
+        }
+    }
+
+    #[test]
+    fn a_scalar_is_quoted_only_when_it_has_to_be() {
+        assert_eq!(write_scalar("/home/me/wd"), "/home/me/wd");
+        assert_eq!(write_scalar("/a #b"), "\"/a #b\"");
+        assert_eq!(write_scalar("a\"b\\"), "a\"b\\");
+        assert_eq!(write_scalar("#a\"b\\"), "\"#a\\\"b\\\\\"");
     }
 
     #[test]
