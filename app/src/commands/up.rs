@@ -29,8 +29,8 @@ pub fn run(parser: &mut lexopt::Parser) -> Result<(), Error> {
             url: url.as_str().to_owned(),
         });
     };
-    precheck::run(&identity)?;
-    let copy = ControlCopy::create(&root, url)?;
+    let auth = precheck::run(&identity)?;
+    let copy = ControlCopy::create(&root, url, auth)?;
     copy.fetch()
 }
 

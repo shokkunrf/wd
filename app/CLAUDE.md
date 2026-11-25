@@ -79,7 +79,7 @@ CIで検査しないものは、レビューで見る。
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
 - `src/fs.rs` — ファイルシステムへの操作のラッパー
-- `src/process.rs` — 外部コマンドの実行のラッパー。gitには`GIT_`で始まる環境変数を渡さない
+- `src/process.rs` — 外部コマンドの実行のラッパー。wdの環境の`GIT_`で始まる環境変数はgitに渡さず、wdが置くものだけを渡す
 - `src/location.rs` — コマンドが動いてよい場所の検査。`WD_WORKSPACE`の有無で判定する
 - `src/config.rs` — `~/.config/wd/`の場所と、`config.yaml`の`root:`の読み書き
 - `src/root.rs` — rootの解決と検査。`WD_ROOT`、`config.yaml`の順に決め、絶対パスで、文字列のままのパスとrealpathの祖先に`.git`が無いこと
@@ -87,7 +87,7 @@ CIで検査しないものは、レビューで見る。
 - `src/name.rs` — 正準形の名前の検証済みの型
 - `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
 - `src/ledger.rs` — 名義台帳の読み込みと、選んだエントリの検査。ファイルは開かず、中身を受け取る
-- `src/control.rs` — controlのコピーの作成とfetch
+- `src/control.rs` — controlのコピーの作成とfetch。名義の型で、gitへの資格情報の渡し方を決める
 - `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト
 - `about.toml`、`about.hbs` — リリースに同梱する依存の著作権表示の設定とテンプレート

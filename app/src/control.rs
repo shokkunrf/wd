@@ -6,9 +6,16 @@ use std::process::Output;
 
 use crate::error::Error;
 use crate::fs;
-use crate::process;
+use crate::process::{self, Stdin};
 use crate::repo_url::RepoUrl;
 use crate::root::Root;
+
+/// How git gets the credentials to fetch, by the type of the selected identity.
+#[derive(Debug)]
+pub enum Auth {
+    App,
+    User,
+}
 
 #[derive(Debug)]
 pub struct ControlCopy {
@@ -16,11 +23,12 @@ pub struct ControlCopy {
     /// `<root>/controls`, where every git call runs.
     cwd: PathBuf,
     url: RepoUrl,
+    auth: Auth,
 }
 
 impl ControlCopy {
     /// Creates the copy afresh, removing one that an earlier run left at the identifier's place.
-    pub fn create(root: &Root, url: RepoUrl) -> Result<ControlCopy, Error> {
+    pub fn create(root: &Root, url: RepoUrl, auth: Auth) -> Result<ControlCopy, Error> {
         let cwd = root.controls();
         let host_dir = cwd.join(url.host());
         let owner_dir = host_dir.join(url.owner());
@@ -29,7 +37,12 @@ impl ControlCopy {
         }
         let path = owner_dir.join(format!("{}.git", url.repo()));
         fs::remove_dir_tree(&path).map_err(|err| Error::dir("remove", &path, err))?;
-        let copy = ControlCopy { path, cwd, url };
+        let copy = ControlCopy {
+            path,
+            cwd,
+            url,
+            auth,
+        };
         copy.init()?;
         Ok(copy)
     }
@@ -86,7 +99,12 @@ impl ControlCopy {
     }
 
     fn git(&self, args: &[&OsStr]) -> Result<Output, Error> {
-        process::git(&self.cwd, args).map_err(|err| Error::GitSpawn {
+        let (env, stdin) = match self.auth {
+            // A github-app identity runs unattended, so git must not wait for the terminal.
+            Auth::App => (app_env(), Stdin::Null),
+            Auth::User => (Vec::new(), Stdin::Inherit),
+        };
+        process::git(&self.cwd, args, &env, stdin).map_err(|err| Error::GitSpawn {
             reason: err.to_string(),
         })
     }
@@ -103,4 +121,25 @@ impl ControlCopy {
             })
         }
     }
+}
+
+/// The variables for a github-app identity, with the configuration passed through GIT_CONFIG_COUNT.
+fn app_env() -> Vec<(String, String)> {
+    let config = [
+        // An empty value drops the helpers of the system configuration.
+        ("credential.helper", ""),
+        ("url.https://github.com/.insteadOf", "git@github.com:"),
+    ];
+    let mut env = vec![
+        ("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned()),
+        // An empty value keeps git from falling back to core.askPass or SSH_ASKPASS.
+        ("GIT_ASKPASS".to_owned(), String::new()),
+        ("GIT_CONFIG_GLOBAL".to_owned(), "/dev/null".to_owned()),
+        ("GIT_CONFIG_COUNT".to_owned(), config.len().to_string()),
+    ];
+    for (index, (key, value)) in config.into_iter().enumerate() {
+        env.push((format!("GIT_CONFIG_KEY_{index}"), key.to_owned()));
+        env.push((format!("GIT_CONFIG_VALUE_{index}"), value.to_owned()));
+    }
+    env
 }

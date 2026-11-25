@@ -1,6 +1,7 @@
 //! The prechecks of up, which run before the control copy is created and report every missing item at once.
 
 use crate::config;
+use crate::control::Auth;
 use crate::error::Error;
 use crate::fs;
 use crate::ledger::{self, Failure, Kind};
@@ -8,12 +9,15 @@ use crate::name::Name;
 use crate::output::quote;
 use crate::yaml;
 
-/// The type of the selected identity, or every missing item, one per line.
-pub(super) fn run(identity: &Name) -> Result<Kind, Error> {
+/// How the control copy fetches with `identity`, or every missing item, one per line.
+pub(super) fn run(identity: &Name) -> Result<Auth, Error> {
     let mut missing = Vec::new();
     let kind = ledger_entry(identity, &mut missing)?;
     match kind {
-        Some(kind) if missing.is_empty() => Ok(kind),
+        Some(kind) if missing.is_empty() => Ok(match kind {
+            Kind::App => Auth::App,
+            Kind::User => Auth::User,
+        }),
         _ => Err(Error::Precheck(missing)),
     }
 }

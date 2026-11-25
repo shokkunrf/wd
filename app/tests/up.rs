@@ -88,6 +88,42 @@ impl Host {
         self.home().join(".config/wd/identities.yaml")
     }
 
+    fn git_log(&self) -> PathBuf {
+        self.dir.join("git.log")
+    }
+
+    /// Puts a shell script on PATH as `name`.
+    fn install(&self, name: &str, script: &str) {
+        // Renamed into place, so no test thread can hold it open for writing while it runs.
+        let file = self.dir.join(name);
+        fs::write(&file, script).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::rename(&file, self.fakebin().join(name)).unwrap();
+    }
+
+    /// Puts a git on PATH that logs each call and fetches github.com from origins/ even without ~/.gitconfig.
+    fn log_git(&self) {
+        self.install(
+            "git",
+            &format!(
+                "#!/bin/sh\n{{\n  echo \"argv: $*\"\n  (PATH=/usr/bin:/bin; env | grep -E '^(GIT_|WD_CONTROL_)' | sort)\n  if IFS= read -r line; then echo \"stdin: $line\"; else echo 'stdin: none'; fi\n}} >>{log}\nexec {git} -c url.{origins}/.insteadOf=https://github.com/ \"$@\"\n",
+                log = self.git_log().display(),
+                git = real_git().display(),
+                origins = self.origins().display(),
+            ),
+        );
+    }
+
+    /// The calls that `log_git` logged, one string per call.
+    fn git_calls(&self) -> Vec<String> {
+        fs::read_to_string(self.git_log())
+            .unwrap()
+            .split("argv: ")
+            .skip(1)
+            .map(str::to_owned)
+            .collect()
+    }
+
     fn root(&self) -> PathBuf {
         self.dir.join("root")
     }
@@ -284,18 +320,13 @@ fn a_failing_set_head_does_not_stop_up() {
 fn a_failing_git_command_names_the_copy_and_leaves_it_for_the_next_up_to_replace() {
     let host = Host::new("git_fails");
     host.origin("me/control.git", "develop", &[]);
-    // Renamed into place, so no test thread can hold it open for writing while it runs.
-    let git = host.dir.join("git");
-    fs::write(
-        &git,
-        format!(
+    host.install(
+        "git",
+        &format!(
             "#!/bin/sh\ncase \"$*\" in *\"remote add\"*) echo 'error: boom' >&2; exit 3;; esac\nexec {} \"$@\"\n",
             real_git().display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
-    fs::rename(&git, host.fakebin().join("git")).unwrap();
+    );
     let copy = host.copy("me", "control");
     let url = "https://github.com/me/control.git";
     assert_fails(
@@ -662,6 +693,70 @@ fn without_git_up_says_to_install_it() {
     let err = stderr(&out);
     assert!(err.starts_with("wd: error: cannot run git: "), "{err}");
     assert!(err.ends_with("; install git 2.32 or newer\n"), "{err}");
+}
+
+#[test]
+fn a_github_app_identity_fetches_without_the_gitconfig_or_the_terminal() {
+    let host = Host::new("github_app");
+    host.origin("me/control.git", "develop", &[]);
+    // If ~/.gitconfig were read, its longer prefix would win over the logging git's.
+    fs::write(
+        host.home().join(".gitconfig"),
+        "[url \"/nonexistent/\"]\n\tinsteadOf = https://github.com/me/\n",
+    )
+    .unwrap();
+    host.log_git();
+    let input = host.dir.join("input");
+    fs::write(&input, "typed\n").unwrap();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "bot"])
+        .stdin(fs::File::open(&input).unwrap())
+        .output()
+        .unwrap();
+    assert_passes(&out);
+    let calls = host.git_calls();
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    for call in &calls {
+        for line in [
+            "GIT_CONFIG_GLOBAL=/dev/null",
+            "GIT_TERMINAL_PROMPT=0",
+            "GIT_ASKPASS=",
+            "GIT_CONFIG_KEY_0=credential.helper",
+            "GIT_CONFIG_VALUE_0=",
+            "stdin: none",
+        ] {
+            assert!(call.lines().any(|l| l == line), "{line} in {call}");
+        }
+    }
+    assert!(
+        calls[2].starts_with(&format!(
+            "--git-dir={} fetch --prune origin\n",
+            host.copy("me", "control").display()
+        )),
+        "{}",
+        calls[2]
+    );
+}
+
+#[test]
+fn a_github_user_identity_lets_git_read_the_terminal() {
+    let host = Host::new("user_stdin");
+    host.origin("me/control.git", "develop", &[]);
+    host.log_git();
+    let input = host.dir.join("input");
+    fs::write(&input, "typed\n").unwrap();
+    let out = host
+        .command(&["https://github.com/me/control.git", "--identity", "me"])
+        .stdin(fs::File::open(&input).unwrap())
+        .output()
+        .unwrap();
+    assert_passes(&out);
+    let calls = host.git_calls();
+    assert!(calls[0].lines().any(|l| l == "stdin: typed"), "{calls:?}");
+    assert!(
+        !calls.iter().any(|call| call.contains("GIT_CONFIG")),
+        "{calls:?}"
+    );
 }
 
 #[test]
