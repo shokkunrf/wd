@@ -33,7 +33,8 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 - unwrap、expect、`panic!`、`todo!`、`unreachable!`、`let _ =`でResultを捨てることを禁じる。テストのコードでは許す。`print!`、`println!`、`eprint!`、`eprintln!`は書き込みに失敗するとpanicし、終了コードが0と1から外れるので、clippyの`print_stdout`と`print_stderr`で禁じ、出力は書き込みのエラーを扱う形で行う
 - 警告をエラーにするのはCIの指定だけで、Cargo.tomlには書かない。clippyは既定のlintグループに個別のlintを足し、pedanticは入れない
 - 検証済みの値は中身をprivateにした型にし、値を作る関数は検証の関数だけにする。コンテナ由来の文字列は受け取った時点で未検証の型に包み、中身を取り出すメソッドを検証と表示用のエスケープだけにする。未検証の型はジェネリクスにしない
-- crateは1つ。コマンドはサブコマンドごとのモジュールに分け、ホストとコンテナのどちらで動いてよいかは各コマンドの定義に持たせ、dispatchで検査する。発行サービスは秘密鍵を扱うので`issuer`モジュールに分け、コマンドのモジュールとは互いに参照しない。共通の処理は`common`のような1つのモジュールにまとめず、`error`や`output`のように機能の名前のモジュールに置く
+- crateは1つ。発行サービスは秘密鍵を扱うので`issuer`モジュールに分け、コマンドのモジュールとは互いに参照しない。コマンドは`src/commands/`にサブコマンドごとのモジュールとして置き、ホストとコンテナのどちらで動いてよいかは各コマンドの定義に持たせ、dispatchで検査する
+- モジュールの置き場は使い手で決め、使い手は今のコードだけでなく、仕様が定める先のコマンドも含めて数える。1つのコマンドだけが使うモジュールは、そのコマンドの下の`src/commands/<コマンド>/`に置く。複数のコマンド、`issuer`、他の共有モジュールが使うモジュールと、`fs`と`process`のラッパーは、`src/`直下に`error`や`output`のように機能の名前で平らに置く。同じ領域のモジュールが増えたときだけ、その領域の名前のディレクトリにまとめる。`common`や`util`のような寄せ集めのモジュールは作らない。`mod.rs`は使わず、`commands.rs`と`commands/`のように置く
 - 外部コマンドの呼び出しとファイルシステムへの操作はそれぞれ1か所のラッパーに集め、それ以外での直接の呼び出しを`disallowed-methods`で禁じる。開くことに限らず、`metadata`、`read_dir`、`remove_dir_all`、`canonicalize`のようにsymlinkを辿る操作も対象にする
 - 発行サービスの秘密鍵を使う処理は、処理の時間が鍵に依らない実装で行い、タイミング攻撃について未修正のadvisoryがある実装は使わない。コンテナは要求を繰り返して応答の時間を測れるからである。暗号はringを使う。rsaはタイミング攻撃のadvisoryが未修正、aws-lc-rsは起動の最初に走るCの初期化を持つので使わない。JWTは自前で組む。HTTPSはureq v3とrustlsで、暗号の実装はring。ルート証明書はwebpki-rootsを埋め込み、その更新をリリースのきっかけにする
 - 他のcrateはlexopt、serde、serde_json、libc、base64。libcは`O_NOFOLLOW`のような定数だけに使う。時刻の書式は自前で書き、ログのcrateは使わない。YAMLはsaphyr-parserのeventを読み、構造体へ手で移す。serde-saphyrは使わない。`deserialize`のfeatureが入れるencoding_rsが、x86_64でインラインアセンブリ（`asm!`）をコンパイルするからである。saphyr-parserの依存のthiserrorは入るが、wdのエラーには使わない
@@ -50,6 +51,7 @@ CIは`RUSTFLAGS=-D warnings`で走る。`wd --version`が出すバージョン�
 | --- | --- |
 | unsafeの禁止 | `Cargo.toml`の`[lints.rust]`の`unsafe_code = "forbid"` |
 | unwrapなどとprint系の禁止 | `Cargo.toml`の`[lints.clippy]`。`dbg!`と`.ok()`でResultを捨てることも禁じる。テストのunwrap、expect、`panic!`は`clippy.toml`の`allow-*-in-tests`で許す。それ以外をテストで使うときと、結合テストの`#[test]`の外の補助関数では、その場所に`allow`を付ける |
+| `mod.rs`の禁止 | `Cargo.toml`の`[lints.clippy]`の`mod_module_files` |
 | 外部コマンドとファイルシステムのラッパー | `clippy.toml`の`disallowed-methods`。ラッパーの関数にだけ`#[allow(clippy::disallowed_methods)]`を付ける。結合テストは実行ファイルと実際のgitを子プロセスとして実行するので、ファイル全体で許す |
 | 依存の許可リスト、build script、禁じるcrate、advisory、ライセンス | `deny.toml`。crateの追加と更新は`bans.allow`のバージョンの変更を伴い、人が承認する |
 | コンパイラのバージョン | `rust-toolchain.toml` |
@@ -69,6 +71,8 @@ CIで検査しないものは、レビューで見る。
 ## ファイル構成
 
 - `src/main.rs` — 引数の解析とコマンドのdispatch
+- `src/commands.rs` — サブコマンドのモジュールの宣言。各コマンドは`src/commands/`に置く
+- `src/commands/validate.rs` — `validate`サブコマンド
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
 - `src/fs.rs` — ファイルを読むラッパー
@@ -76,8 +80,7 @@ CIで検査しないものは、レビューで見る。
 - `src/name.rs` — 正準形の名前の検査
 - `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
 - `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
-- `src/validate.rs` — `validate`サブコマンド
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト
 - `about.toml`、`about.hbs` — リリースに同梱する依存の著作権表示の設定とテンプレート
 
-サブコマンドのモジュールと`issuer`は、それを実装するtaskが`src/`に足す。
+サブコマンドのモジュールはそれを実装するtaskが`src/commands/`に、`issuer`はそれを実装するtaskが`src/`に足す。

@@ -1,9 +1,9 @@
+mod commands;
 mod error;
 mod fs;
 mod name;
 mod output;
 mod repo_url;
-mod validate;
 mod workspace;
 mod yaml;
 
@@ -40,7 +40,7 @@ fn run(args: Vec<OsString>) -> Result<(), Error> {
             output::line(VERSION)
         }
         Some(Value(command)) => match command.to_str() {
-            Some("validate") => validate::run(&mut parser),
+            Some("validate") => commands::validate::run(&mut parser),
             _ => Err(Error::UnknownCommand(command)),
         },
         Some(arg) => Err(arg.unexpected().into()),
