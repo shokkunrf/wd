@@ -74,6 +74,7 @@ CIで検査しないものは、レビューで見る。
 - `src/commands.rs` — サブコマンドのモジュールの宣言。各コマンドは`src/commands/`に置く
 - `src/commands/init.rs` — `init`サブコマンド。名義台帳の雛形を持つ
 - `src/commands/up.rs` — `up`サブコマンド
+- `src/commands/up/precheck.rs` — `up`の前提検査。全件を集めてから、欠けたものを1件1行で報告する
 - `src/commands/validate.rs` — `validate`サブコマンド
 - `src/error.rs` — エラーの型
 - `src/output.rs` — 標準出力と標準エラーへの書き込み
@@ -83,8 +84,9 @@ CIで検査しないものは、レビューで見る。
 - `src/config.rs` — `~/.config/wd/`の場所と、`config.yaml`の`root:`の読み書き
 - `src/root.rs` — rootの解決と検査。`WD_ROOT`、`config.yaml`の順に決め、絶対パスで、文字列のままのパスとrealpathの祖先に`.git`が無いこと
 - `src/yaml.rs` — YAMLの共通の読み取り。1文書を、所有する木に読む
-- `src/name.rs` — 正準形の名前の検査
+- `src/name.rs` — 正準形の名前の検証済みの型
 - `src/repo_url.rs` — URLの2形の検証済みの型と、そこから導く識別子
+- `src/ledger.rs` — 名義台帳の読み込みと、選んだエントリの検査。ファイルは開かず、中身を受け取る
 - `src/control.rs` — controlのコピーの作成とfetch
 - `src/workspace.rs` — workspace.yamlのキー表と値の書式の検査、`control`の参照と一意性の検査
 - `tests/` — 実行ファイルを子プロセスとして実行する結合テスト

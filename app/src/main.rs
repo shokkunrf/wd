@@ -3,6 +3,7 @@ mod config;
 mod control;
 mod error;
 mod fs;
+mod ledger;
 mod location;
 mod name;
 mod output;

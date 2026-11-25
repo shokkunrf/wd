@@ -15,6 +15,20 @@ repos:
     default_ref: branch:develop
 ";
 
+const LEDGER: &str = "identities:
+  me:
+    type: github-user
+    login: me
+    email: me@example.com
+  bot:
+    type: github-app
+    app_id: 1
+    installation_id: 2
+    pem: /nonexistent/bot.pem
+    login: bot[bot]
+    email: 1+bot[bot]@users.noreply.github.com
+";
+
 /// A host in a fresh directory outside any git working tree, with its own HOME, PATH and root.
 struct Host {
     dir: PathBuf,
@@ -43,6 +57,8 @@ impl Host {
             fs::create_dir_all(host.dir.join(sub)).unwrap();
         }
         std::os::unix::fs::symlink(real_git(), host.fakebin().join("git")).unwrap();
+        fs::create_dir_all(host.ledger().parent().unwrap()).unwrap();
+        fs::write(host.ledger(), LEDGER).unwrap();
         let origins = host.origins();
         // github.com in either URL form fetches from origins/ instead.
         fs::write(
@@ -66,6 +82,10 @@ impl Host {
 
     fn origins(&self) -> PathBuf {
         self.dir.join("origins")
+    }
+
+    fn ledger(&self) -> PathBuf {
+        self.home().join(".config/wd/identities.yaml")
     }
 
     fn root(&self) -> PathBuf {
@@ -642,4 +662,92 @@ fn without_git_up_says_to_install_it() {
     let err = stderr(&out);
     assert!(err.starts_with("wd: error: cannot run git: "), "{err}");
     assert!(err.ends_with("; install git 2.32 or newer\n"), "{err}");
+}
+
+#[test]
+fn an_identity_missing_from_the_ledger_stops_up_before_creating_the_copy() {
+    let host = Host::new("ledger_key");
+    host.origin("me/control.git", "develop", &[]);
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "other"]),
+        &format!(
+            "wd: error: {}: line 2, column 3: the identity \"other\" is not in the ledger; the keys present are \"me\", \"bot\"; pick one of them with --identity, or add an entry with that key under `identities`\n",
+            host.ledger().display()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn a_missing_or_symlinked_ledger_stops_up_before_creating_the_copy() {
+    let host = Host::new("ledger_file");
+    let url = "https://github.com/me/control.git";
+    let moved = host.dir.join("identities.yaml");
+    fs::rename(host.ledger(), &moved).unwrap();
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "wd: error: \"{}\" does not exist; run wd init --root <dir> to write its template, then add an entry for \"me\" under `identities`\n",
+            host.ledger().display()
+        ),
+    );
+    std::os::unix::fs::symlink(&moved, host.ledger()).unwrap();
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "wd: error: \"{}\" is a symlink, which wd does not follow; check where it points and remove it by hand\n",
+            host.ledger().display()
+        ),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn every_problem_of_the_selected_entry_is_reported_by_line_and_column() {
+    let host = Host::new("ledger_entry");
+    fs::write(
+        host.ledger(),
+        "identities:\n  bot:\n    type: github-app\n    login: -bot\n    app_id: 0\n",
+    )
+    .unwrap();
+    let ledger = host.ledger();
+    assert_fails(
+        &host.up(&["https://github.com/me/control.git", "--identity", "bot"]),
+        &[
+            "line 3, column 5: missing key `identities[bot].email`",
+            "line 3, column 5: missing key `identities[bot].installation_id`",
+            "line 3, column 5: missing key `identities[bot].pem`",
+            "line 4, column 12: `identities[bot].login` is invalid: \"-bot\" is not a GitHub login; use letters, digits and hyphens, starting and ending with a letter or digit, with an optional \"[bot]\"",
+            "line 5, column 13: `identities[bot].app_id` is invalid: 0 is not 1 or more; use a positive number",
+        ]
+        .iter()
+        .map(|line| format!("wd: error: {}: {line}\n", ledger.display()))
+        .collect::<String>(),
+    );
+    assert_no_copy(&host);
+}
+
+#[test]
+fn entries_other_than_the_selected_one_are_checked_only_for_their_value_types() {
+    let host = Host::new("ledger_others");
+    host.origin("me/control.git", "develop", &[]);
+    let url = "https://github.com/me/control.git";
+    fs::write(
+        host.ledger(),
+        format!("{LEDGER}  odd:\n    type: robot\n    login: '!!'\n"),
+    )
+    .unwrap();
+    assert_passes(&host.up(&[url, "--identity", "me"]));
+    fs::write(
+        host.ledger(),
+        format!("{LEDGER}  odd:\n    type: robot\n    login: true\n"),
+    )
+    .unwrap();
+    assert_fails(
+        &host.up(&[url, "--identity", "me"]),
+        &format!(
+            "wd: error: {}: line 15, column 12: `identities[odd].login` must be a string or an integer, but the plain value \"true\" is read as a boolean; write it in quotes to use it as a string\n",
+            host.ledger().display()
+        ),
+    );
 }
