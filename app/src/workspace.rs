@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::name;
+use crate::name::Name;
 use crate::output::{escape, quote};
 use crate::repo_url::RepoUrl;
 use crate::yaml::{Entry, Error, Node, Pos};
@@ -142,13 +142,13 @@ pub fn check(root: &Node) -> Result<(), Failure> {
     }
 
     let mut formats = Vec::new();
-    checked(top, "", "name", &mut formats, name::check);
-    checked(top, "", "control", &mut formats, name::check);
+    checked(top, "", "name", &mut formats, Name::parse);
+    checked(top, "", "control", &mut formats, Name::parse);
     checked(top, "", "agent", &mut formats, Agent::parse);
     let mut urls = Vec::new();
     for element in &elements {
         let (scope, entries) = (element.scope.as_str(), element.entries);
-        checked(entries, scope, "name", &mut formats, name::check);
+        checked(entries, scope, "name", &mut formats, Name::parse);
         let url = checked(entries, scope, "url", &mut formats, RepoUrl::parse);
         checked(
             entries,

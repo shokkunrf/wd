@@ -103,7 +103,17 @@ fn same_root(config_yaml: &Path, recorded: &str, root: &Root, given: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ledger::{self, Kind};
+    use crate::name::Name;
     use crate::yaml;
+
+    fn uncommented_template() -> String {
+        LEDGER_TEMPLATE
+            .lines()
+            .skip_while(|line| *line != "# identities:")
+            .map(|line| format!("{}\n", line.strip_prefix("# ").unwrap()))
+            .collect()
+    }
 
     #[test]
     fn the_ledger_template_reads_as_no_entries() {
@@ -113,16 +123,20 @@ mod tests {
 
     #[test]
     fn the_ledger_template_uncommented_has_both_entries() {
-        let uncommented: String = LEDGER_TEMPLATE
-            .lines()
-            .skip_while(|line| *line != "# identities:")
-            .map(|line| format!("{}\n", line.strip_prefix("# ").unwrap()))
-            .collect();
-        let root = yaml::parse(uncommented.as_bytes()).unwrap();
+        let root = yaml::parse(uncommented_template().as_bytes()).unwrap();
         let entries = root.as_map("the document").unwrap();
         assert_eq!(entries[0].key, "identities");
         let identities = entries[0].value.as_map("`identities`").unwrap();
         let keys: Vec<&str> = identities.iter().map(|entry| entry.key.as_str()).collect();
         assert_eq!(keys, ["bot", "me"]);
+    }
+
+    #[test]
+    fn the_entries_of_the_ledger_template_pass_the_ledger_check() {
+        let text = uncommented_template();
+        for (key, kind) in [("bot", Kind::App), ("me", Kind::User)] {
+            let key = Name::parse(key).unwrap();
+            assert_eq!(ledger::read(text.as_bytes(), &key).unwrap(), kind);
+        }
     }
 }

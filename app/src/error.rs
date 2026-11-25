@@ -92,6 +92,8 @@ pub enum Error {
     BadIdentity {
         reason: String,
     },
+    /// The missing items of the prechecks, one line each.
+    Precheck(Vec<String>),
     GitSpawn {
         reason: String,
     },
@@ -300,6 +302,7 @@ impl fmt::Display for Error {
                 quote(url)
             ),
             Error::BadIdentity { reason } => write!(f, "--identity is invalid: {reason}"),
+            Error::Precheck(lines) => write!(f, "{}", lines.join("\n")),
             Error::GitSpawn { reason } => {
                 write!(f, "cannot run git: {reason}; install git 2.32 or newer")
             }
