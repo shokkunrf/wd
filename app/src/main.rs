@@ -1,10 +1,12 @@
 mod commands;
 mod config;
+mod control;
 mod error;
 mod fs;
 mod location;
 mod name;
 mod output;
+mod process;
 mod repo_url;
 mod root;
 mod workspace;
@@ -48,6 +50,7 @@ fn run(args: Vec<OsString>) -> Result<(), Error> {
         Some(Value(command)) => {
             let (name, runs, run): (&'static str, Runs, RunCommand) = match command.to_str() {
                 Some("init") => ("init", commands::init::RUNS, commands::init::run),
+                Some("up") => ("up", commands::up::RUNS, commands::up::run),
                 Some("validate") => (
                     "validate",
                     commands::validate::RUNS,

@@ -8,6 +8,8 @@ const HOST: &str = "github.com";
 #[derive(Debug)]
 pub struct RepoUrl {
     url: String,
+    owner: String,
+    repo: String,
     identifier: String,
 }
 
@@ -48,14 +50,33 @@ impl RepoUrl {
                 quote(repo)
             ));
         }
+        let owner = owner.to_lowercase();
+        let repo = repo.to_lowercase();
         Ok(RepoUrl {
             url: text.to_owned(),
-            identifier: format!("{HOST}/{}/{}", owner.to_lowercase(), repo.to_lowercase()),
+            identifier: format!("{HOST}/{owner}/{repo}"),
+            owner,
+            repo,
         })
     }
 
     pub fn identifier(&self) -> &str {
         &self.identifier
+    }
+
+    /// The host of the identifier, which is the only one accepted.
+    pub fn host(&self) -> &'static str {
+        HOST
+    }
+
+    /// The owner of the identifier, in lowercase.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Lowercase, so that URLs differing only in case share one control copy.
+    pub fn repo(&self) -> &str {
+        &self.repo
     }
 
     pub fn as_str(&self) -> &str {
@@ -147,6 +168,8 @@ mod tests {
         ] {
             assert_eq!(identifier(text), "github.com/o/r", "{text}");
             assert_eq!(RepoUrl::parse(text).unwrap().as_str(), text);
+            assert_eq!(RepoUrl::parse(text).unwrap().owner(), "o");
+            assert_eq!(RepoUrl::parse(text).unwrap().repo(), "r");
         }
     }
 
@@ -163,6 +186,11 @@ mod tests {
         assert_eq!(
             identifier("git@github.com:_o.x-y/r_1.git.git"),
             "github.com/_o.x-y/r_1.git"
+        );
+        let url = RepoUrl::parse("https://github.com/Me/Repo.GIT").unwrap();
+        assert_eq!(
+            (url.host(), url.owner(), url.repo()),
+            ("github.com", "me", "repo")
         );
     }
 

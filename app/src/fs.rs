@@ -139,6 +139,18 @@ pub fn entry_exists(path: &Path) -> io::Result<bool> {
     }
 }
 
+/// Whether the path leads to a directory, following symlinks.
+#[allow(clippy::disallowed_methods)]
+pub fn is_dir(path: &Path) -> io::Result<bool> {
+    match std::fs::metadata(path) {
+        Ok(meta) => Ok(meta.is_dir()),
+        Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            Ok(false)
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// The path with every symlink resolved. The path must exist.
 #[allow(clippy::disallowed_methods)]
 pub fn realpath(path: &Path) -> io::Result<PathBuf> {
@@ -164,6 +176,23 @@ pub fn ensure_dir(path: &Path) -> Result<(), DirError> {
         Err(DirError::Symlink)
     } else if meta.is_dir() {
         Ok(())
+    } else {
+        Err(DirError::NotDir)
+    }
+}
+
+/// Removes a directory tree that is absent or a real directory; a symlink or a file is left in place.
+#[allow(clippy::disallowed_methods)]
+pub fn remove_dir_tree(path: &Path) -> Result<(), DirError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(DirError::Io(err)),
+    };
+    if meta.file_type().is_symlink() {
+        Err(DirError::Symlink)
+    } else if meta.is_dir() {
+        std::fs::remove_dir_all(path).map_err(DirError::Io)
     } else {
         Err(DirError::NotDir)
     }

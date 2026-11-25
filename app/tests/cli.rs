@@ -47,12 +47,12 @@ fn unknown_option_exits_1_naming_the_option() {
 
 #[test]
 fn unknown_command_exits_1_naming_the_command() {
-    let out = wd(&["up"]);
+    let out = wd(&["frobnicate"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(out.stdout.is_empty());
     assert_eq!(
         String::from_utf8(out.stderr).unwrap(),
-        "wd: error: unknown command \"up\"\n"
+        "wd: error: unknown command \"frobnicate\"\n"
     );
 }
 
